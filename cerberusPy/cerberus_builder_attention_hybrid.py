@@ -7,9 +7,7 @@ def ksize(size):
     return max([2,round(size/9)])
 
 def form_head(layer_input, size, feature_len, csize=64):
-    head_out = layers.Conv2D(filters=csize, kernel_size=(ksize(size), ksize(feature_len)))(layer_input)
-    head_out = layers.LeakyReLU()(head_out)
-    head_out = layers.MaxPooling2D(pool_size=(2, 2))(head_out)
+    head_out = layers.MultiHeadAttention(num_heads=csize, key_dim=feature_len)(layer_input, layer_input)
     head_out = layers.Flatten()(head_out)
     head_out = layers.Dense(units=csize)(head_out)
     head_out = layers.LeakyReLU()(head_out)
@@ -32,22 +30,22 @@ def build_cerberus(training_data, response_data, csize=64):
     # Build call head
     print(call_size)
     print(call_fl)
-    in_call = layers.Input(shape=(call_size, call_fl, 1))
+    in_call = layers.Input(shape=(call_size, call_fl))
     call_head = form_head(in_call, call_size, call_fl, csize)
 
     # Include last known call
-    last_known = in_call[:, call_size-1, :, 0]
+    last_known = in_call[:,call_size-1, :]
 
     # Build context(s) head
     in_contexts = []
     context_heads = []
     for icl in context_dims:
-        input_layer = layers.Input(shape=(icl[1], icl[2], 1))
+        input_layer = layers.Input(shape=(icl[1], icl[2]))
         in_contexts.append(input_layer)
         context_heads.append(form_head(input_layer, icl[1], icl[2], csize))
 
     # Build response head
-    in_response = layers.Input(shape=(res_size, res_fl, 1))
+    in_response = layers.Input(shape=(res_size, res_fl))
     response_head = form_head(in_response, res_size, res_fl, csize)
 
     # Combine heads with necks
