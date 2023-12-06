@@ -7,7 +7,7 @@ def ksize(size):
     return max([2,round(size/9)])
 
 def form_head(layer_input, size, feature_len, csize=64):
-    head_out = layers.MultiHeadAttention(num_heads=32, key_dim=feature_len)(layer_input, layer_input)
+    head_out = layers.MultiHeadAttention(num_heads=4, key_dim=feature_len)(layer_input, layer_input)
     head_out = layers.LeakyReLU()(head_out)
     head_out = layers.Flatten()(head_out)
     head_out = layers.Dense(units=csize)(head_out)
@@ -51,13 +51,10 @@ def build_cerberus(training_data, response_data, csize=64):
 
     # Combine heads with necks
     necks = layers.Concatenate(axis=1)([call_head] + context_heads + [response_head])
-    necks = layers.Reshape((csize, context_len + 2))(necks)
-    # necks = layers.Conv2D(filters=csize, kernel_size=(2, 2))(necks)
-    num_heads = 4
-    necks = layers.MultiHeadAttention(num_heads=num_heads, key_dim=csize)(necks, necks)
+    necks = layers.Dense(units=csize * 16)(necks)
     necks = layers.LeakyReLU()(necks)
-    # necks = layers.MaxPooling2D(pool_size=(2, 2))(necks)
-    necks = layers.Flatten()(necks)
+    necks = layers.Dense(units=csize * 8)(necks)
+    necks = layers.LeakyReLU()(necks)
 
     # Construct body
     body = layers.Concatenate(axis=1)([last_known, necks])

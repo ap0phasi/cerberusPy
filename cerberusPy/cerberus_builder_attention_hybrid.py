@@ -7,7 +7,8 @@ def ksize(size):
     return max([2,round(size/9)])
 
 def form_head(layer_input, size, feature_len, csize=64):
-    head_out = layers.MultiHeadAttention(num_heads=csize, key_dim=feature_len)(layer_input, layer_input)
+    head_out = layers.MultiHeadAttention(num_heads=4, key_dim=feature_len)(layer_input, layer_input)
+    head_out = layers.LeakyReLU()(head_out)
     head_out = layers.Flatten()(head_out)
     head_out = layers.Dense(units=csize)(head_out)
     head_out = layers.LeakyReLU()(head_out)
