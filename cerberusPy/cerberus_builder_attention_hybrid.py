@@ -29,8 +29,6 @@ def build_cerberus(training_data, response_data, csize=64):
     res_size, res_fl = train_response.shape[1], train_response.shape[2]
 
     # Build call head
-    print(call_size)
-    print(call_fl)
     in_call = layers.Input(shape=(call_size, call_fl))
     call_head = form_head(in_call, call_size, call_fl, csize)
 
@@ -73,7 +71,7 @@ def build_cerberus(training_data, response_data, csize=64):
 
     return model
 
-def train_cerberus(model, training_data, response_data, epochs):
+def train_cerberus(model, training_data, response_data, epochs, showplot = False):
     train_call = training_data['call']
     train_contexts = [training_data[key] for key in training_data if 'context' in key]
     train_response = training_data['response']
@@ -89,26 +87,27 @@ def train_cerberus(model, training_data, response_data, epochs):
         verbose=1  # Change to 0 for no output, 1 for progress bar
     )
     
-    # Plot the training history
-    plt.figure(figsize=(12, 6))
-    
-    # Plot training loss
-    plt.subplot(1, 2, 1)
-    plt.plot(history.history['loss'],
-             label='Train Loss')
-    plt.title('Training Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-
-    # If there's validation loss, plot that as well
-    if 'val_loss' in history.history:
-        plt.plot(history.history['val_loss'], label='Validation Loss')
+    if showplot:
+        # Plot the training history
+        plt.figure(figsize=(12, 6))
+        
+        # Plot training loss
+        plt.subplot(1, 2, 1)
+        plt.plot(history.history['loss'],
+                label='Train Loss')
+        plt.title('Training Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
         plt.legend()
 
-    # Additional metrics can be plotted in a similar fashion
-    # ...
+        # If there's validation loss, plot that as well
+        if 'val_loss' in history.history:
+            plt.plot(history.history['val_loss'], label='Validation Loss')
+            plt.legend()
 
-    plt.show()
+        # Additional metrics can be plotted in a similar fashion
+        # ...
+
+        plt.show()
 
     return model
