@@ -129,7 +129,7 @@ def slice_timeseries_data(downsampled_data: pd.DataFrame,
             selected_timestamps.append(timestamp)
     
             for key in check_size_dict:
-                if key == 'forward':
+                if key == 'response':
                     direction = 'following'
                 else:
                     direction = 'preceding'
