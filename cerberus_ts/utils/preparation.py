@@ -5,8 +5,6 @@ import numpy as np
 
 # For CUDA acceleration
 from accelerate import Accelerator
-accelerator = Accelerator()
-device = accelerator.device
 
 from torch.utils.data import DataLoader, TensorDataset
 import torch
@@ -274,25 +272,27 @@ def prepare_timeseries_data(df,
 
     # Create a DataLoader for each dataset
     dataloaders = [DataLoader(dataset, batch_size=100, shuffle=True) for dataset in datasets]
-    
+
+    # For CUDA Acceleration
+    accelerator = Accelerator()
+
     # Prepare each DataLoader
     prepared_dataloaders = [accelerator.prepare(dataloader) for dataloader in dataloaders]
     
-    return prepared_dataloaders, sliced_data
+    return prepared_dataloaders, sliced_data, max_change_dfs
 
 
-def denormalize(normalized_df, max_change_df, initial_value, start_idx, end_idx):
-    # Initialize the reconstructed DataFrame with the initial value
-    reconstructed_df = pd.DataFrame(index=normalized_df.index[start_idx-1:end_idx])
-    for column in normalized_df.columns:
-        reconstructed_df[column] = initial_value[column]
-        # Iteratively reconstruct the signal
-        for i in range(start_idx, end_idx):
-            delta_max = max_change_df.loc[column, 'Max Absolute Change']
-            delta_t = 2 * normalized_df.at[normalized_df.index[i], column] * delta_max - delta_max
-            reconstructed_df.at[normalized_df.index[i], column] = reconstructed_df.at[normalized_df.index[i - 1], column] + delta_t
-    reconstructed_df.drop(index=reconstructed_df.index[0], axis=0, inplace=True)
-    return reconstructed_df
+def denormalize_response(normalized_df, max_change_df, initial_value):
+    reconstructed_array = []
+    new_value = initial_value
+    reconstructed_array.append(initial_value)
+    delta_max = np.array(max_change_df).T
+    for i in range(normalized_df.shape[0]):
+        delta_t = 2 * normalized_df[i,:] * delta_max - delta_max
+        new_value = new_value + delta_t
+        reconstructed_array.append(new_value[0])
+        
+    return pd.DataFrame(reconstructed_array)
 
 def generate_predictions(model,selected_data):
     calls = make_torch_tensor(selected_data['call'])
@@ -307,6 +307,8 @@ def generate_predictions(model,selected_data):
         with torch.no_grad():
             res_out = model(calls, contexts, responses, last_knowns)
             responses[0,0,igen,:] = res_out[0]
+            # For multi-channel coil-normalized heads
+            responses[0,1,igen,:] = 1 - res_out[0]
             respones_generated.append(res_out[0].numpy())
         
     return np.vstack(respones_generated)

@@ -7,7 +7,7 @@ def ksize(size):
     return max([2, round(size / 9)])
 
 class FormHead(nn.Module):
-    def __init__(self, size, feature_len, csize=64, channels=2):
+    def __init__(self, size, feature_len, csize=128, channels=2):
         super(FormHead, self).__init__()
         self.conv = nn.Conv2d(channels, csize, kernel_size=(ksize(size), ksize(feature_len)))
         self.pool = nn.MaxPool2d(2, 2)
@@ -17,7 +17,7 @@ class FormHead(nn.Module):
         conv_output_flen = (feature_len - ksize(feature_len) + 1) // 2
         linear_input_size = conv_output_size * conv_output_flen * csize
         # print(linear_input_size)
-        self.fc = nn.Linear(linear_input_size, 64)
+        self.fc = nn.Linear(linear_input_size, csize)
 
     def forward(self, x):
         x = F.leaky_relu(self.conv(x))
@@ -27,7 +27,7 @@ class FormHead(nn.Module):
         return x
 
 class Cerberus(nn.Module):
-    def __init__(self, sizes, feature_indexes, csize=64):
+    def __init__(self, sizes, feature_indexes, csize=128):
         super(Cerberus, self).__init__()
         
         call_size = sizes['call']
@@ -75,7 +75,7 @@ def train_cerberus(model, prepared_dataloaders, num_epochs):
     accelerator = Accelerator()
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=6e-4, betas=(0.9, 0.95), weight_decay=1e-1)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     model, optimizer = accelerator.prepare(model, optimizer)
 
     # Training Loop
