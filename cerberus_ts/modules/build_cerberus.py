@@ -278,7 +278,6 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs):
 
         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {running_loss / sum(len(d) for d in prepared_dataloaders)}")
         
-    
     # Freeze all foresight weights
     for param in foresight.parameters():
         param.requires_grad = False
