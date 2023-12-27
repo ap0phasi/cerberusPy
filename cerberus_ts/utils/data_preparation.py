@@ -215,6 +215,10 @@ def make_torch_tensor(channel_array):
 
     # Create the second channel as 1 minus the first channel
     second_channel = 1 - first_channel
+    
+    # We want to make sure we maintain distinction between a response that is the maximum decrease and one that is masked.
+    # In the case where the first channel is 0, we will assume this denotes a NaN, so we will replace it like this:
+    second_channel[first_channel == 0] = 0
 
     # Combine both channels to form a two-channel tensor
     # The unsqueeze(1) adds a channel dimension
@@ -249,6 +253,9 @@ def generate_predictions(model,selected_data):
             responses[0,0,igen,:] = res_out[0]
             # For multi-channel coil-normalized heads
             responses[0,1,igen,:] = 1 - res_out[0]
+            # In the case where the first channel is 0, we will assume this denotes a NaN, so we will replace it like this:
+            responses[0,1,igen,:][responses[0,0,igen,:] == 0] = 0
+            
             respones_generated.append(res_out[0].numpy())
         
     return np.vstack(respones_generated)
@@ -274,7 +281,7 @@ def invert_scaling(scaled_array, min_max_df, feature_range=(0, 1)):
 
 
 class TimeseriesDataPreparer:
-    def __init__(self, df, sizes, thresholds, feature_indexes, window_timesteps, train_len, feature_range=(0, 1)):
+    def __init__(self, df, sizes, thresholds, feature_indexes, window_timesteps, train_len, feature_range=(0, 1), batch_size = 100):
         self.df = df
         self.sizes = sizes
         self.thresholds = thresholds
@@ -282,6 +289,7 @@ class TimeseriesDataPreparer:
         self.window_timesteps = window_timesteps
         self.train_len = train_len
         self.feature_range = feature_range
+        self.batch_size = batch_size
 
         # Initialize attributes to store results
         self.min_max_df = None
@@ -315,9 +323,11 @@ class TimeseriesDataPreparer:
         responses = make_torch_tensor(self.expanded_dict['response'][train_index, :, :])
         last_knowns = torch.tensor(self.expanded_dict['last_known'][train_index, 0, :], dtype=torch.float32)
         y = torch.tensor(self.response_data[train_index, :], dtype=torch.float32)
+        # For foresight we also need the unmasked response prepared
+        unmasked = torch.tensor(self.unmasked_response[train_index, :, :], dtype=torch.float32)
 
-        datasets = [TensorDataset(calls, context, responses, last_knowns, y) for context in contexts]
-        self.dataloaders = [DataLoader(dataset, batch_size=100, shuffle=True) for dataset in datasets]
+        datasets = [TensorDataset(calls, context, responses, last_knowns, y, unmasked) for context in contexts]
+        self.dataloaders = [DataLoader(dataset, self.batch_size, shuffle=True) for dataset in datasets]
 
         # For CUDA Acceleration
         accelerator = Accelerator()
