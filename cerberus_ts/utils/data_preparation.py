@@ -10,6 +10,8 @@ from torch.utils.data import DataLoader, TensorDataset
 import torch
 import random
 
+import matplotlib.pyplot as plt
+
 def downsample_timeseries_data(df: pd.DataFrame, 
                                 feature_indexes: dict,
                                 window_timesteps: dict
@@ -220,68 +222,6 @@ def make_torch_tensor(channel_array):
     
     return both_channels
 
-def prepare_timeseries_data(df,
-                            sizes,
-                            thresholds,
-                            feature_indexes,
-                            window_timesteps,
-                            train_len,
-                            feature_range = [0, 1]):
-    
-    # Calculate the min-max dataframe
-    min_max_df = create_min_max_df(df)
-    # Perform min-max scaling to specified feature range
-    scaled_df = scale_data(df, min_max_df, feature_range)
-    
-    # Downsample data based on window timesteps
-    downsampled_data = downsample_timeseries_data(scaled_df, 
-                                        feature_indexes,
-                                        window_timesteps)
-    
-    # Perform Coil Normalization
-    normalized_data = {}
-    max_change_dfs = {}
-    for key in downsampled_data:
-        normalized_data[key], max_change_dfs[key] = coil_normalization(downsampled_data[key])
-        
-    # Perform data slicing
-    sliced_data, selected_timestamps = slice_timeseries_data(normalized_data,
-                                                        downsampled_data,
-                                                        sizes,
-                                                        thresholds)
-    
-    # Perform masked expansion
-    expanded_dict, response_data, unmasked_response = masked_expand(sliced_data, sizes)
-    
-    # Randomly sample training data
-    train_index = random.sample(range(train_len), train_len)
-
-    # We will convert our numpy arrays to 2-channel tensors
-    calls = make_torch_tensor(expanded_dict['call'][train_index,:,:])
-    contexts = [make_torch_tensor(expanded_dict[key][train_index,:,:]) for key in expanded_dict if 'context' in key]
-    responses = make_torch_tensor(expanded_dict['response'][train_index,:,:])
-
-    # Last knowns isn't coil-normalized so we won't process it as such
-    last_knowns = torch.tensor(expanded_dict['last_known'][train_index,0,:], dtype=torch.float32)
-
-    # We don't need to produce both channels of the coil normalization, we can just do the first. 
-    y = torch.tensor(response_data[train_index,:], dtype=torch.float32)
-
-    # Create separate datasets for each context
-    datasets = [TensorDataset(calls, context, responses, last_knowns, y) for context in contexts]
-
-    # Create a DataLoader for each dataset
-    dataloaders = [DataLoader(dataset, batch_size=100, shuffle=True) for dataset in datasets]
-
-    # For CUDA Acceleration
-    accelerator = Accelerator()
-
-    # Prepare each DataLoader
-    prepared_dataloaders = [accelerator.prepare(dataloader) for dataloader in dataloaders]
-    
-    return prepared_dataloaders, sliced_data, max_change_dfs
-
-
 def denormalize_response(normalized_df, max_change_df, initial_value):
     reconstructed_array = []
     new_value = initial_value
@@ -312,3 +252,122 @@ def generate_predictions(model,selected_data):
             respones_generated.append(res_out[0].numpy())
         
     return np.vstack(respones_generated)
+
+
+class TimeseriesDataPreparer:
+    def __init__(self, df, sizes, thresholds, feature_indexes, window_timesteps, train_len, feature_range=[0, 1]):
+        self.df = df
+        self.sizes = sizes
+        self.thresholds = thresholds
+        self.feature_indexes = feature_indexes
+        self.window_timesteps = window_timesteps
+        self.train_len = train_len
+        self.feature_range = feature_range
+
+        # Initialize attributes to store results
+        self.min_max_df = None
+        self.scaled_df = None
+        self.downsampled_data = None
+        self.normalized_data = None
+        self.max_change_dfs = None
+        self.sliced_data = None
+        self.selected_timestamps = None
+        self.expanded_dict = None
+        self.response_data = None
+        self.unmasked_response = None
+        self.dataloaders = None
+
+    def prepare_data(self):
+        # Perform all the steps of data preparation
+        self.min_max_df = create_min_max_df(self.df)
+        self.scaled_df = scale_data(self.df, self.min_max_df, self.feature_range)
+        self.downsampled_data = downsample_timeseries_data(self.scaled_df, self.feature_indexes, self.window_timesteps)
+
+        self.normalized_data, self.max_change_dfs = {}, {}
+        for key in self.downsampled_data:
+            self.normalized_data[key], self.max_change_dfs[key] = coil_normalization(self.downsampled_data[key])
+
+        self.sliced_data, self.selected_timestamps = slice_timeseries_data(self.normalized_data, self.downsampled_data, self.sizes, self.thresholds)
+        self.expanded_dict, self.response_data, self.unmasked_response = masked_expand(self.sliced_data, self.sizes)
+
+        train_index = random.sample(range(self.train_len), self.train_len)
+        calls = make_torch_tensor(self.expanded_dict['call'][train_index, :, :])
+        contexts = [make_torch_tensor(self.expanded_dict[key][train_index, :, :]) for key in self.expanded_dict if 'context' in key]
+        responses = make_torch_tensor(self.expanded_dict['response'][train_index, :, :])
+        last_knowns = torch.tensor(self.expanded_dict['last_known'][train_index, 0, :], dtype=torch.float32)
+        y = torch.tensor(self.response_data[train_index, :], dtype=torch.float32)
+
+        datasets = [TensorDataset(calls, context, responses, last_knowns, y) for context in contexts]
+        self.dataloaders = [DataLoader(dataset, batch_size=100, shuffle=True) for dataset in datasets]
+
+        # For CUDA Acceleration
+        accelerator = Accelerator()
+        self.dataloaders = [accelerator.prepare(dataloader) for dataloader in self.dataloaders]
+
+class ResponseGenerator:
+    def __init__(self, model, sliced_data, feature_indexes, max_change_dfs):
+        self.model = model
+        self.sliced_data = sliced_data
+        self.feature_indexes = feature_indexes
+        self.max_change_dfs = max_change_dfs
+        
+        # Initialize attributes to store results
+        self.responses_generated = None
+        self.denormalized_response = None
+        self.selected_data = None
+        self.observed_response = None
+
+    def generate_response(self, sel_index):
+        # Move model to CPU and set to evaluation mode
+        self.model.to("cpu")
+        self.model.eval()
+
+        # Select data for the specified index
+        self.selected_data = {key: value[sel_index:sel_index+1, :] for key, value in self.sliced_data.items()}
+        self.responses_generated = generate_predictions(self.model, self.selected_data)
+        
+        # Find last known values to condition denormalizaiton
+        initial_value = self.selected_data['last_known'][0][0][self.feature_indexes['response']]
+        max_change_df = self.max_change_dfs['response']
+
+        # Denormalize the response
+        self.denormalized_response = denormalize_response(self.responses_generated, max_change_df, initial_value)
+        self.observed_response = denormalize_response(self.selected_data['response'][0,:,:], max_change_df, initial_value)
+    
+    def plot_normalized_responses(self):
+        # Example matrices
+        observed = self.selected_data['response'][0,:,:]
+        modeled = self.responses_generated
+
+        # Number of rows and columns
+        num_rows, num_cols = observed.shape
+
+        # Create a plot for each feature (column)
+        for i in range(num_cols):
+            plt.figure(figsize=(10, 6))
+            plt.plot(observed[:, i], label='Observed Change - Feature {}'.format(i+1))
+            plt.plot(modeled[:, i], label='Modeled Change - Feature {}'.format(i+1))
+            plt.title(f'Feature {i+1} Comparison')
+            plt.xlabel('Time')
+            plt.ylabel('Value')
+            plt.legend()
+            plt.show()
+            
+    def plot_denormalized_responses(self):
+        # Example matrices
+        observed = self.observed_response
+        modeled = self.denormalized_response
+
+        # Number of rows and columns
+        num_rows, num_cols = observed.shape
+
+        # Create a plot for each feature (column)
+        for i in range(num_cols):
+            plt.figure(figsize=(10, 6))
+            plt.plot(observed.iloc[:, i], label='Observed Scaled - Feature {}'.format(i+1))
+            plt.plot(modeled.iloc[:, i], label='Modeled Scaled- Feature {}'.format(i+1))
+            plt.title(f'Feature {i+1} Comparison')
+            plt.xlabel('Time')
+            plt.ylabel('Value')
+            plt.legend()
+            plt.show()
