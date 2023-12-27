@@ -27,7 +27,7 @@ class FormHead(nn.Module):
         return x
 
 class Foresight(nn.Module):
-    def __init__(self, sizes, feature_indexes, csize=128):
+    def __init__(self, sizes, feature_indexes, eventualities = 10, csize=128):
         super(Foresight,self).__init__()
         
         call_size = sizes['call']
@@ -57,7 +57,7 @@ class Foresight(nn.Module):
                                padding=1, 
                                output_padding=0),
             nn.LeakyReLU(),
-            nn.ConvTranspose2d(csize * 16, 2, 
+            nn.ConvTranspose2d(csize * 16, eventualities, 
                                kernel_size=3, 
                                stride=1, 
                                padding=1, 
@@ -81,9 +81,26 @@ class Foresight(nn.Module):
         necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
         out = self.decoder(necks)
         return out
+        
+    def forward(self, x_call, x_contexts, x_response, x_lastknown):
+        # Produce call, context, and masked response heads
+        call_head_out = self.call_head(x_call)
+        context_heads_out = [head(x) for head, x in zip(self.context_heads, x_contexts)]
+        response_head_out = self.response_head(x_response)
+        
+        # Use last known value
+        last_known = x_lastknown
+        
+        necks = torch.cat([call_head_out] + context_heads_out + [response_head_out], dim=1)
+        necks = F.leaky_relu(self.fc1(necks))
+        necks = F.leaky_relu(self.fc2(necks))
+        necks = F.leaky_relu(self.expander(torch.cat([necks] + [last_known], dim=1)))
+        necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
+        out = self.decoder(necks)
+        return out
 
 class Cerberus(nn.Module):
-    def __init__(self, sizes, feature_indexes, csize=128, foresight = None):
+    def __init__(self, sizes, feature_indexes, csize=128, foresight = None, eventualities = 10):
         super(Cerberus, self).__init__()
         self.foresight = foresight
         
@@ -98,7 +115,7 @@ class Cerberus(nn.Module):
         self.response_head = FormHead(res_size, res_fl, csize)
         
         if self.foresight is not None:
-            self.foresight_head = FormHead(res_size, res_fl, csize, channels=2)
+            self.foresight_head = FormHead(res_size, res_fl, csize, channels=eventualities)
             num_noncontext = 3
         else:
             num_noncontext = 2
@@ -197,10 +214,21 @@ def train_cerberus(model, prepared_dataloaders, num_epochs):
         
     return model
 
+class EventualityMSELoss(nn.Module):
+    def __init__(self):
+        super(EventualityMSELoss, self).__init__()
+
+    def forward(self, output, observed):
+        cum_error = 0
+        # Separate the mean and variance
+        for iev in range(output.shape[1]):
+            nll = (observed - output[:,iev,:,:]) ** 2
+            cum_error += nll.mean()
+        return cum_error
 
 def train_foresight(foresight, prepared_dataloaders, num_epochs):
     # Define a loss function
-    criterion = torch.nn.GaussianNLLLoss()
+    criterion = EventualityMSELoss()
 
     # Initialize the Accelerator
     accelerator = Accelerator()
@@ -221,7 +249,7 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs):
             try:
                 # Collect batches from each DataLoader
                 batches = [next(iterator) for iterator in iterators]
-
+                
                 # Prepare data for the model
                 calls_batch = next(batch[0] for batch in batches)
                 contexts_batch = [batch[1] for batch in batches]
@@ -236,7 +264,7 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs):
 
                     # Forward pass
                     outputs = foresight(calls_batch, contexts_batch, responses_batch, last_knowns_batch)
-                    loss = criterion(outputs[:, 0, :, :], unmasked_batch, var = outputs[:, 1, :,:])
+                    loss = criterion(outputs, unmasked_batch)
 
                     # Backward pass and optimize
                     accelerator.backward(loss)
