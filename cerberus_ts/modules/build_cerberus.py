@@ -77,7 +77,7 @@ class Cerberus(nn.Module):
         body = F.leaky_relu(self.fc3(torch.cat([necks] + [last_known], dim=1)))
         body = F.leaky_relu(self.fc4(body))
         body = F.leaky_relu(self.fc5(body))
-        body = self.out(body)
+        body = torch.sigmoid(self.out(body))
         return body
     
     
