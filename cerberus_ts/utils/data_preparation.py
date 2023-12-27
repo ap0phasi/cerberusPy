@@ -252,10 +252,29 @@ def generate_predictions(model,selected_data):
             respones_generated.append(res_out[0].numpy())
         
     return np.vstack(respones_generated)
+def invert_scaling(scaled_array, min_max_df, feature_range=(0, 1)):
+    """
+    Inverts the scaling for a numpy array based on min-max values and a given feature range.
+
+    :param scaled_array: numpy array of scaled data.
+    :param min_max_df: DataFrame with 'min' and 'max' values for each feature.
+    :param feature_range: tuple indicating the range used during scaling.
+    :return: DataFrame of original scale data.
+    """
+    min_scale, max_scale = feature_range
+    original_data = np.zeros_like(scaled_array)
+
+    for i in range(scaled_array.shape[1]):
+        min_val = min_max_df.iloc[i]['min']
+        max_val = min_max_df.iloc[i]['max']
+        # Reverse the scaling formula
+        original_data[:, i] = ((scaled_array.iloc[:, i] - min_scale) / (max_scale - min_scale)) * (max_val - min_val) + min_val
+
+    return pd.DataFrame(original_data)
 
 
 class TimeseriesDataPreparer:
-    def __init__(self, df, sizes, thresholds, feature_indexes, window_timesteps, train_len, feature_range=[0, 1]):
+    def __init__(self, df, sizes, thresholds, feature_indexes, window_timesteps, train_len, feature_range=(0, 1)):
         self.df = df
         self.sizes = sizes
         self.thresholds = thresholds
@@ -316,6 +335,8 @@ class ResponseGenerator:
         self.denormalized_response = None
         self.selected_data = None
         self.observed_response = None
+        self.observed_unscaled = None
+        self.modeled_unscaled = None
 
     def generate_response(self, sel_index):
         # Move model to CPU and set to evaluation mode
@@ -333,9 +354,13 @@ class ResponseGenerator:
         # Denormalize the response
         self.denormalized_response = denormalize_response(self.responses_generated, max_change_df, initial_value)
         self.observed_response = denormalize_response(self.selected_data['response'][0,:,:], max_change_df, initial_value)
+        
+    def unscale_response(self, min_max_df, feature_indexes):
+        scale_frame = min_max_df.iloc[feature_indexes['response'],:]
+        self.observed_unscaled = invert_scaling(self.observed_response, scale_frame, feature_range = (0,1))
+        self.modeled_unscaled = invert_scaling(self.denormalized_response, scale_frame, feature_range = (0,1))
     
     def plot_normalized_responses(self):
-        # Example matrices
         observed = self.selected_data['response'][0,:,:]
         modeled = self.responses_generated
 
@@ -347,6 +372,23 @@ class ResponseGenerator:
             plt.figure(figsize=(10, 6))
             plt.plot(observed[:, i], label='Observed Change - Feature {}'.format(i+1))
             plt.plot(modeled[:, i], label='Modeled Change - Feature {}'.format(i+1))
+            plt.title(f'Feature {i+1} Comparison')
+            plt.xlabel('Time')
+            plt.ylabel('Value')
+            plt.legend()
+            plt.show()
+            
+    def plot_unscaled_responses(self, min_max_df, feature_indexes):
+        self.unscale_response(min_max_df,feature_indexes)
+
+        # Number of rows and columns
+        num_rows, num_cols = self.observed_unscaled.shape
+
+        # Create a plot for each feature (column)
+        for i in range(num_cols):
+            plt.figure(figsize=(10, 6))
+            plt.plot(self.observed_unscaled.iloc[:, i], label='Observed Unscaled - Feature {}'.format(i+1))
+            plt.plot(self.modeled_unscaled.iloc[:, i], label='Modeled Unscaled - Feature {}'.format(i+1))
             plt.title(f'Feature {i+1} Comparison')
             plt.xlabel('Time')
             plt.ylabel('Value')
@@ -365,7 +407,7 @@ class ResponseGenerator:
         for i in range(num_cols):
             plt.figure(figsize=(10, 6))
             plt.plot(observed.iloc[:, i], label='Observed Scaled - Feature {}'.format(i+1))
-            plt.plot(modeled.iloc[:, i], label='Modeled Scaled- Feature {}'.format(i+1))
+            plt.plot(modeled.iloc[:, i], label='Modeled Scaled - Feature {}'.format(i+1))
             plt.title(f'Feature {i+1} Comparison')
             plt.xlabel('Time')
             plt.ylabel('Value')

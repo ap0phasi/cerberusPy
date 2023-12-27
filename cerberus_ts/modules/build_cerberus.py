@@ -27,8 +27,9 @@ class FormHead(nn.Module):
         return x
 
 class Cerberus(nn.Module):
-    def __init__(self, sizes, feature_indexes, csize=128):
+    def __init__(self, sizes, feature_indexes, csize=128, foresight = None):
         super(Cerberus, self).__init__()
+        self.foresight = foresight
         
         call_size = sizes['call']
         res_size = sizes['response']
@@ -39,6 +40,9 @@ class Cerberus(nn.Module):
         self.call_head = FormHead(call_size, call_fl, csize)
         self.context_heads = nn.ModuleList([FormHead(icl[0], icl[1], csize) for icl in context_dims])
         self.response_head = FormHead(res_size, res_fl, csize)
+        
+        if self.foresight is not None:
+            self.foresight_head = FormHead(res_size, res_fl, csize, channels=2)
 
         self.fc1 = nn.Linear(csize * (2 + len(context_dims)), csize * 16)
         self.fc2 = nn.Linear(csize * 16, csize * 8)
@@ -48,13 +52,26 @@ class Cerberus(nn.Module):
         self.out = nn.Linear(csize // 2, res_fl)
 
     def forward(self, x_call, x_contexts, x_response, x_lastknown):
+        
+        # If foresight is provided
+        if self.foresight is not None:
+            # Produce foresight
+            foresight_out = self.foresight(x_call, x_contexts, x_response)
+            foresight_head_out = self.foresight_head(foresight_out)
+        
+        # Produce call, context, and masked response heads
         call_head_out = self.call_head(x_call)
         context_heads_out = [head(x) for head, x in zip(self.context_heads, x_contexts)]
         response_head_out = self.response_head(x_response)
         
+        # Use last known value
         last_known = x_lastknown
         
-        necks = torch.cat([call_head_out] + context_heads_out + [response_head_out], dim=1)
+        if self.foresight is not None:
+            necks = torch.cat([call_head_out] + context_heads_out + [response_head_out] + [foresight_head_out], dim=1)
+        else:
+            necks = torch.cat([call_head_out] + context_heads_out + [response_head_out], dim=1)
+            
         necks = F.leaky_relu(self.fc1(necks))
         necks = F.leaky_relu(self.fc2(necks))
         body = F.leaky_relu(self.fc3(torch.cat([necks] + [last_known], dim=1)))
