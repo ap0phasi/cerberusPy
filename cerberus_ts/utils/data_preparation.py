@@ -12,6 +12,9 @@ import random
 
 import matplotlib.pyplot as plt
 
+# Import configuration
+from .cerberus_config import CerberusConfig
+
 def downsample_timeseries_data(df: pd.DataFrame, 
                                 feature_indexes: dict,
                                 window_timesteps: dict
@@ -216,9 +219,10 @@ def make_torch_tensor(channel_array):
     # Create the second channel as 1 minus the first channel
     second_channel = 1 - first_channel
     
-    # We want to make sure we maintain distinction between a response that is the maximum decrease and one that is masked.
-    # In the case where the first channel is 0, we will assume this denotes a NaN, so we will replace it like this:
-    second_channel[first_channel == 0] = 0
+    if CerberusConfig.set_masked_norm_zero:
+        # We want to make sure we maintain distinction between a response that is the maximum decrease and one that is masked.
+        # In the case where the first channel is 0, we will assume this denotes a NaN, so we will replace it like this:
+        second_channel[first_channel == 0] = 0
 
     # Combine both channels to form a two-channel tensor
     # The unsqueeze(1) adds a channel dimension
@@ -253,8 +257,10 @@ def generate_predictions(model,selected_data):
             responses[0,0,igen,:] = res_out[0]
             # For multi-channel coil-normalized heads
             responses[0,1,igen,:] = 1 - res_out[0]
-            # In the case where the first channel is 0, we will assume this denotes a NaN, so we will replace it like this:
-            responses[0,1,igen,:][responses[0,0,igen,:] == 0] = 0
+            
+            if CerberusConfig.set_masked_norm_zero:
+                # In the case where the first channel is 0, we will assume this denotes a NaN, so we will replace it like this:
+                responses[0,1,igen,:][responses[0,0,igen,:] == 0] = 0
             
             respones_generated.append(res_out[0].numpy())
         
