@@ -11,23 +11,29 @@ class MultiChannelMHA(nn.Module):
     def __init__(self, num_channels, size, feature_len, csize=128, num_heads=4):
         super(MultiChannelMHA, self).__init__()
         self.mha_layers = nn.ModuleList([MultiheadAttention(embed_dim=csize, num_heads=num_heads) for _ in range(num_channels)])
-
-        # Assuming the input is [batch_size, channels, height, width]
-        # Reshape to [batch_size, height * width, channels] for MHA
+        self.csize = csize
         self.flatten_dim = size * feature_len
+        self.num_channels = num_channels
 
     def forward(self, x):
         batch_size, channels, height, width = x.shape
         channel_wise_outputs = []
 
-        for i, mha_layer in enumerate(self.mha_layers):
+        for i in range(self.num_channels):
+            mha_layer = self.mha_layers[i]
+            
             # Process each channel with its MHA layer
-            channel_data = x[:, i, :, :].reshape(batch_size, -1, self.flatten_dim)  # Reshape for MHA
-            mha_output, _ = mha_layer(channel_data, channel_data, channel_data)
-            channel_wise_outputs.append(mha_output)
+            channel_data = x[:, i, :, :].reshape(batch_size, self.flatten_dim)
+            channel_data = channel_data.unsqueeze(-1).expand(-1, -1, self.csize)
+            channel_data = channel_data.permute(1, 0, 2)  # Reshape to [sequence_length, batch_size, embed_dim]
 
-        # Aggregate the results from all channels
-        aggregated_output = torch.cat(channel_wise_outputs, dim=-1)  # Concatenate along the feature dimension
+            mha_output, _ = mha_layer(channel_data, channel_data, channel_data)
+            mha_output = mha_output.permute(1, 0, 2)  # Reshape back to [batch_size, sequence_length, embed_dim]
+
+            # Aggregate outputs of all heads
+            channel_wise_outputs.append(mha_output[:, :, 0])
+
+        aggregated_output = torch.stack(channel_wise_outputs, dim=1)
         return aggregated_output
 
 class FormHead(nn.Module):
@@ -50,16 +56,18 @@ class FormHead(nn.Module):
                 # Calculate the output size after convolution and pooling
                 size = (size - ksize(size) + 1) // pool_size  # Assuming stride of 1 and pool of 2
                 feature_len = max([1, (feature_len - ksize(feature_len) + 1) // pool_size])
+                linear_input_size = size * feature_len * csize
             elif layer_type == "mha":
                 # Assuming a certain configuration for MultiheadAttention. Adjust as necessary.
                 mha_layer = MultiChannelMHA(channels, size, feature_len, csize, num_heads=4)
                 self.layers.append(mha_layer)
                 # Note: MHA layer configuration will depend on your specific requirements
+                linear_input_size = size * feature_len * channels
             else:
                 raise ValueError(f"Unknown layer type: {layer_type}")
 
         self.pool = nn.MaxPool2d(pool_size,pool_size)
-        linear_input_size = size * feature_len * csize
+        
         self.fc = nn.Linear(linear_input_size, csize)
 
     def forward(self, x):
@@ -67,9 +75,9 @@ class FormHead(nn.Module):
             if isinstance(layer, nn.Conv2d):
                 x = F.leaky_relu(layer(x))
                 x = self.pool(x)
-            elif isinstance(layer, MultiheadAttention):
+            elif isinstance(layer, MultiChannelMHA):
                 # Use self-attention
-                x = layer(x, x, x)
+                x = layer(x)
             else:
                 raise ValueError(f"Unsupported layer type: {type(layer)}")
 
