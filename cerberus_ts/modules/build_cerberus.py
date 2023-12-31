@@ -233,9 +233,10 @@ def train_cerberus(model, prepared_dataloaders, num_epochs):
     accelerator = Accelerator()
     
     batch_size = next(iter(prepared_dataloaders[0]))[0].size(0)
+    batch_factor = (batch_size/100) ** 0.5
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=batch_size*1e-5)
+    optimizer = torch.optim.Adam(model.parameters(), lr=batch_factor*0.001)
     model, optimizer = accelerator.prepare(model, optimizer)
 
     # Training Loop
@@ -301,9 +302,10 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs):
     accelerator = Accelerator()
     
     batch_size = next(iter(prepared_dataloaders[0]))[0].size(0)
+    batch_factor = (batch_size/100) ** 0.5
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(foresight.parameters(), lr=batch_size*1e-5)
+    optimizer = torch.optim.Adam(foresight.parameters(), lr=batch_factor*0.001)
     foresight, optimizer = accelerator.prepare(foresight, optimizer)
 
     # Training Loop
