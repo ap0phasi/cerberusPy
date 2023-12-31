@@ -92,7 +92,7 @@ class FormHead(nn.Module):
         return x
 
 class Foresight(nn.Module):
-    def __init__(self, sizes, feature_indexes, csize=128, hsize = 64, eventualities = 10, head_layers=None):
+    def __init__(self, sizes, feature_indexes, csize=128, hsize = 128, eventualities = 10, head_layers=None):
         super(Foresight,self).__init__()
         
         call_size = sizes['call']
@@ -165,7 +165,7 @@ class Foresight(nn.Module):
         return out
 
 class Cerberus(nn.Module):
-    def __init__(self, sizes, feature_indexes, csize=128, hsize = 64, foresight = None, eventualities = 10, head_layers=None):
+    def __init__(self, sizes, feature_indexes, csize=128, hsize = 128, foresight = None, eventualities = 10, head_layers=None):
         super(Cerberus, self).__init__()
         self.foresight = foresight
         
@@ -231,9 +231,11 @@ def train_cerberus(model, prepared_dataloaders, num_epochs):
 
     # Initialize the Accelerator
     accelerator = Accelerator()
+    
+    batch_size = next(iter(prepared_dataloaders[0]))[0].size(0)
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=batch_size*1e-5)
     model, optimizer = accelerator.prepare(model, optimizer)
 
     # Training Loop
@@ -297,9 +299,11 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs):
 
     # Initialize the Accelerator
     accelerator = Accelerator()
+    
+    batch_size = next(iter(prepared_dataloaders[0]))[0].size(0)
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(foresight.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(foresight.parameters(), lr=batch_size*1e-5)
     foresight, optimizer = accelerator.prepare(foresight, optimizer)
 
     # Training Loop
