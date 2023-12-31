@@ -333,7 +333,7 @@ class TimeseriesDataPreparer:
         unmasked = torch.tensor(self.unmasked_response[train_index, :, :], dtype=torch.float32)
 
         datasets = [TensorDataset(calls, context, responses, last_knowns, y, unmasked) for context in contexts]
-        self.dataloaders = [DataLoader(dataset, self.batch_size, shuffle=True, num_workers=4) for dataset in datasets]
+        self.dataloaders = [DataLoader(dataset, self.batch_size, shuffle=True, num_workers=1) for dataset in datasets]
 
         # For CUDA Acceleration
         accelerator = Accelerator()
