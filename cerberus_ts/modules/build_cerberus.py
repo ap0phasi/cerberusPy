@@ -37,7 +37,7 @@ class MultiChannelMHA(nn.Module):
         return aggregated_output
 
 class FormHead(nn.Module):
-    def __init__(self, size, feature_len, csize = 128, hsize=128, pool_size = 2, head_layers=None, channels=2):
+    def __init__(self, size, feature_len, csize = 128, hsize=128, pool_size = 1, head_layers=None, channels=2):
         super(FormHead, self).__init__()
 
         if head_layers is None:
@@ -90,7 +90,7 @@ class FormHead(nn.Module):
         return x
 
 class Foresight(nn.Module):
-    def __init__(self, sizes, feature_indexes, csize=128, hsize = 128, pool_size = 2, eventualities = 10, head_layers=None):
+    def __init__(self, sizes, feature_indexes, csize=128, hsize = 128, pool_size = 1, eventualities = 10, head_layers=None, dropout = 0.0):
         super(Foresight,self).__init__()
         
         call_size = sizes['call']
@@ -102,6 +102,8 @@ class Foresight(nn.Module):
         self.call_head = FormHead(call_size, call_fl, csize, hsize, pool_size, head_layers)
         self.context_heads = nn.ModuleList([FormHead(icl[0], icl[1], csize, hsize, pool_size, head_layers) for icl in context_dims])
         self.response_head = FormHead(res_size, res_fl, csize, hsize, pool_size, head_layers)
+        
+        self.dropout = nn.Dropout(dropout)
         
         self.fc1 = nn.Linear(csize * (2 + len(context_dims)), csize * 16)
         self.fc2 = nn.Linear(csize * 16, csize * 8)
@@ -138,32 +140,16 @@ class Foresight(nn.Module):
         last_known = x_lastknown
         
         necks = torch.cat([call_head_out] + context_heads_out + [response_head_out], dim=1)
-        necks = F.leaky_relu(self.fc1(necks))
-        necks = F.leaky_relu(self.fc2(necks))
+        necks = F.leaky_relu(self.dropout(self.fc1(necks)))
+        necks = F.leaky_relu(self.dropout(self.fc2(necks)))
         necks = F.leaky_relu(self.expander(torch.cat([necks] + [last_known], dim=1)))
         necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
         out = self.decoder(necks)
         return out
         
-    def forward(self, x_call, x_contexts, x_response, x_lastknown):
-        # Produce call, context, and masked response heads
-        call_head_out = self.call_head(x_call)
-        context_heads_out = [head(x) for head, x in zip(self.context_heads, x_contexts)]
-        response_head_out = self.response_head(x_response)
-        
-        # Use last known value
-        last_known = x_lastknown
-        
-        necks = torch.cat([call_head_out] + context_heads_out + [response_head_out], dim=1)
-        necks = F.leaky_relu(self.fc1(necks))
-        necks = F.leaky_relu(self.fc2(necks))
-        necks = F.leaky_relu(self.expander(torch.cat([necks] + [last_known], dim=1)))
-        necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
-        out = self.decoder(necks)
-        return out
 
 class Cerberus(nn.Module):
-    def __init__(self, sizes, feature_indexes, csize=128, hsize = 128, pool_size = 2, foresight = None, eventualities = 10, head_layers=None):
+    def __init__(self, sizes, feature_indexes, csize=128, hsize = 128, pool_size = 1, foresight = None, eventualities = 10, head_layers=None, dropout = 0.0):
         super(Cerberus, self).__init__()
         self.foresight = foresight
         
@@ -183,6 +169,8 @@ class Cerberus(nn.Module):
         else:
             num_noncontext = 2
 
+        self.dropout = nn.Dropout(dropout)
+ 
         self.fc1 = nn.Linear(csize * (num_noncontext + len(context_dims)), csize * 16)
         self.fc2 = nn.Linear(csize * 16, csize * 8)
         self.fc3 = nn.Linear(csize * 8 + call_fl, csize * 4)
@@ -211,11 +199,11 @@ class Cerberus(nn.Module):
         else:
             necks = torch.cat([call_head_out] + context_heads_out + [response_head_out], dim=1)
             
-        necks = F.leaky_relu(self.fc1(necks))
-        necks = F.leaky_relu(self.fc2(necks))
-        body = F.leaky_relu(self.fc3(torch.cat([necks] + [last_known], dim=1)))
-        body = F.leaky_relu(self.fc4(body))
-        body = F.leaky_relu(self.fc5(body))
+        necks = F.leaky_relu(self.dropout(self.fc1(necks)))
+        necks = F.leaky_relu(self.dropout(self.fc2(necks)))
+        body = F.leaky_relu(self.dropout(self.fc3(torch.cat([necks] + [last_known], dim=1))))
+        body = F.leaky_relu(self.dropout(self.fc4(body)))
+        body = F.leaky_relu(self.dropout(self.fc5(body)))
         body = torch.sigmoid(self.out(body))
         return body
     
