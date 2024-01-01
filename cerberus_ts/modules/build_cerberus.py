@@ -2,32 +2,95 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+from torch.nn import MultiheadAttention
 
 def ksize(size):
-    return max([2, round(size / 9)])
+    return max([1, round(size / 9)])
+
+class MultiChannelMHA(nn.Module):
+    def __init__(self, num_channels, size, feature_len, hsize=128, num_heads=4):
+        super(MultiChannelMHA, self).__init__()
+        self.mha_layers = nn.ModuleList([MultiheadAttention(embed_dim=hsize, num_heads=num_heads) for _ in range(num_channels)])
+        self.hsize = hsize
+        self.flatten_dim = size * feature_len
+        self.num_channels = num_channels
+
+    def forward(self, x):
+        batch_size, channels, height, width = x.shape
+        channel_wise_outputs = []
+
+        for i in range(self.num_channels):
+            mha_layer = self.mha_layers[i]
+            
+            # Process each channel with its MHA layer
+            channel_data = x[:, i, :, :].reshape(batch_size, self.flatten_dim)
+            channel_data = channel_data.unsqueeze(-1).expand(-1, -1, self.hsize)
+            channel_data = channel_data.permute(1, 0, 2)  # Reshape to [sequence_length, batch_size, embed_dim]
+
+            mha_output, _ = mha_layer(channel_data, channel_data, channel_data)
+            mha_output = mha_output.permute(1, 0, 2)  # Reshape back to [batch_size, sequence_length, embed_dim]
+
+            # Aggregate outputs of all heads
+            channel_wise_outputs.append(mha_output[:, :, 0])
+
+        aggregated_output = torch.stack(channel_wise_outputs, dim=1)
+        return aggregated_output
 
 class FormHead(nn.Module):
-    def __init__(self, size, feature_len, csize=128, channels=2):
+    def __init__(self, size, feature_len, csize = 128, hsize=128, pool_size = 1, head_layers=None, channels=2):
         super(FormHead, self).__init__()
-        self.conv = nn.Conv2d(channels, csize, kernel_size=(ksize(size), ksize(feature_len)))
-        self.pool = nn.MaxPool2d(2, 2)
 
-        # Calculate the output size after convolution and pooling
-        conv_output_size = (size - ksize(size) + 1) // 2  # Assuming stride of 1 in conv and 2 in pool
-        conv_output_flen = (feature_len - ksize(feature_len) + 1) // 2
-        linear_input_size = conv_output_size * conv_output_flen * csize
-        # print(linear_input_size)
+        if head_layers is None:
+            head_layers = ["conv"]  # Default to a single convolutional layer if not specified
+            
+        # Handle hsize as either a single value or a list
+        if not isinstance(hsize, list):
+            hsize = [hsize] * len(head_layers)  # Repeat the single hsize value for each layer
+            
+        # Handle pool_size as either a single value or a list
+        if not isinstance(pool_size, list):
+            pool_size = [pool_size] * len(head_layers)  # Repeat the single hsize value for each layer
+
+        self.layers = nn.ModuleList()
+        self.pools = nn.ModuleList()
+        
+        current_channels = channels
+
+        for idx, layer_type in enumerate(head_layers):
+            layer_hsize = hsize[idx]  # hsize for the current layer
+            layer_pool_size = pool_size[idx]
+            if layer_type == "conv":
+                conv_layer = nn.Conv2d(current_channels, layer_hsize, kernel_size=(ksize(size), ksize(feature_len)))
+                self.layers.append(conv_layer)
+                self.layers.append(nn.LeakyReLU())
+                self.layers.append(nn.MaxPool2d(layer_pool_size,layer_pool_size))
+                current_channels = layer_hsize
+                
+                # Calculate the output size after convolution and pooling
+                size = (size - ksize(size) + 1) // layer_pool_size  # Assuming stride of 1 and pool of 2
+                feature_len = max([1, (feature_len - ksize(feature_len) + 1) // layer_pool_size])
+                linear_input_size = size * feature_len * layer_hsize
+            elif layer_type == "mha":
+                # Assuming a certain configuration for MultiheadAttention. Adjust as necessary.
+                mha_layer = MultiChannelMHA(channels, size, feature_len, layer_hsize, num_heads=4)
+                self.layers.append(mha_layer)
+                # Note: MHA layer configuration will depend on your specific requirements
+                linear_input_size = size * feature_len * channels
+            else:
+                raise ValueError(f"Unknown layer type: {layer_type}")
+        
         self.fc = nn.Linear(linear_input_size, csize)
 
     def forward(self, x):
-        x = F.leaky_relu(self.conv(x))
-        x = self.pool(x)
+        for layer in self.layers:
+            x = layer(x)
+
         x = torch.flatten(x, 1)
         x = F.leaky_relu(self.fc(x))
         return x
 
 class Foresight(nn.Module):
-    def __init__(self, sizes, feature_indexes, eventualities = 10, csize=128):
+    def __init__(self, sizes, feature_indexes, csize=128, hsize = 128, pool_size = 1, eventualities = 10, head_layers=None, dropout = 0.0):
         super(Foresight,self).__init__()
         
         call_size = sizes['call']
@@ -36,9 +99,11 @@ class Foresight(nn.Module):
         res_fl = len(feature_indexes['response'])
         context_dims = [[sizes[key], len(feature_indexes[key])]  for key in sizes if 'context' in key]
 
-        self.call_head = FormHead(call_size, call_fl, csize)
-        self.context_heads = nn.ModuleList([FormHead(icl[0], icl[1], csize) for icl in context_dims])
-        self.response_head = FormHead(res_size, res_fl, csize)
+        self.call_head = FormHead(call_size, call_fl, csize, hsize, pool_size, head_layers)
+        self.context_heads = nn.ModuleList([FormHead(icl[0], icl[1], csize, hsize, pool_size, head_layers) for icl in context_dims])
+        self.response_head = FormHead(res_size, res_fl, csize, hsize, pool_size, head_layers)
+        
+        self.dropout = nn.Dropout(dropout)
         
         self.fc1 = nn.Linear(csize * (2 + len(context_dims)), csize * 16)
         self.fc2 = nn.Linear(csize * 16, csize * 8)
@@ -75,32 +140,16 @@ class Foresight(nn.Module):
         last_known = x_lastknown
         
         necks = torch.cat([call_head_out] + context_heads_out + [response_head_out], dim=1)
-        necks = F.leaky_relu(self.fc1(necks))
-        necks = F.leaky_relu(self.fc2(necks))
+        necks = F.leaky_relu(self.dropout(self.fc1(necks)))
+        necks = F.leaky_relu(self.dropout(self.fc2(necks)))
         necks = F.leaky_relu(self.expander(torch.cat([necks] + [last_known], dim=1)))
         necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
         out = self.decoder(necks)
         return out
         
-    def forward(self, x_call, x_contexts, x_response, x_lastknown):
-        # Produce call, context, and masked response heads
-        call_head_out = self.call_head(x_call)
-        context_heads_out = [head(x) for head, x in zip(self.context_heads, x_contexts)]
-        response_head_out = self.response_head(x_response)
-        
-        # Use last known value
-        last_known = x_lastknown
-        
-        necks = torch.cat([call_head_out] + context_heads_out + [response_head_out], dim=1)
-        necks = F.leaky_relu(self.fc1(necks))
-        necks = F.leaky_relu(self.fc2(necks))
-        necks = F.leaky_relu(self.expander(torch.cat([necks] + [last_known], dim=1)))
-        necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
-        out = self.decoder(necks)
-        return out
 
 class Cerberus(nn.Module):
-    def __init__(self, sizes, feature_indexes, csize=128, foresight = None, eventualities = 10):
+    def __init__(self, sizes, feature_indexes, csize=128, hsize = 128, pool_size = 1, foresight = None, eventualities = 10, head_layers=None, dropout = 0.0):
         super(Cerberus, self).__init__()
         self.foresight = foresight
         
@@ -110,16 +159,18 @@ class Cerberus(nn.Module):
         res_fl = len(feature_indexes['response'])
         context_dims = [[sizes[key], len(feature_indexes[key])]  for key in sizes if 'context' in key]
 
-        self.call_head = FormHead(call_size, call_fl, csize)
-        self.context_heads = nn.ModuleList([FormHead(icl[0], icl[1], csize) for icl in context_dims])
-        self.response_head = FormHead(res_size, res_fl, csize)
+        self.call_head = FormHead(call_size, call_fl, csize, hsize, pool_size, head_layers)
+        self.context_heads = nn.ModuleList([FormHead(icl[0], icl[1], csize, hsize, pool_size, head_layers) for icl in context_dims])
+        self.response_head = FormHead(res_size, res_fl, csize, hsize, pool_size, head_layers)
         
         if self.foresight is not None:
-            self.foresight_head = FormHead(res_size, res_fl, csize, channels=eventualities)
+            self.foresight_head = FormHead(res_size, res_fl, csize, hsize, pool_size, head_layers, channels=eventualities)
             num_noncontext = 3
         else:
             num_noncontext = 2
 
+        self.dropout = nn.Dropout(dropout)
+ 
         self.fc1 = nn.Linear(csize * (num_noncontext + len(context_dims)), csize * 16)
         self.fc2 = nn.Linear(csize * 16, csize * 8)
         self.fc3 = nn.Linear(csize * 8 + call_fl, csize * 4)
@@ -148,11 +199,11 @@ class Cerberus(nn.Module):
         else:
             necks = torch.cat([call_head_out] + context_heads_out + [response_head_out], dim=1)
             
-        necks = F.leaky_relu(self.fc1(necks))
-        necks = F.leaky_relu(self.fc2(necks))
-        body = F.leaky_relu(self.fc3(torch.cat([necks] + [last_known], dim=1)))
-        body = F.leaky_relu(self.fc4(body))
-        body = F.leaky_relu(self.fc5(body))
+        necks = F.leaky_relu(self.dropout(self.fc1(necks)))
+        necks = F.leaky_relu(self.dropout(self.fc2(necks)))
+        body = F.leaky_relu(self.dropout(self.fc3(torch.cat([necks] + [last_known], dim=1))))
+        body = F.leaky_relu(self.dropout(self.fc4(body)))
+        body = F.leaky_relu(self.dropout(self.fc5(body)))
         body = torch.sigmoid(self.out(body))
         return body
     
@@ -166,9 +217,12 @@ def train_cerberus(model, prepared_dataloaders, num_epochs):
 
     # Initialize the Accelerator
     accelerator = Accelerator()
+    
+    batch_size = next(iter(prepared_dataloaders[0]))[0].size(0)
+    batch_factor = (batch_size/100) ** 0.5
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=batch_factor*0.001)
     model, optimizer = accelerator.prepare(model, optimizer)
 
     # Training Loop
@@ -232,9 +286,12 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs):
 
     # Initialize the Accelerator
     accelerator = Accelerator()
+    
+    batch_size = next(iter(prepared_dataloaders[0]))[0].size(0)
+    batch_factor = (batch_size/100) ** 0.5
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(foresight.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(foresight.parameters(), lr=batch_factor*0.001)
     foresight, optimizer = accelerator.prepare(foresight, optimizer)
 
     # Training Loop
@@ -256,7 +313,7 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs):
                 responses_batch = next(batch[2] for batch in batches)
                 last_knowns_batch = next(batch[3] for batch in batches)
                 unmasked_batch = next(batch[5] for batch in batches) # Unmasked is stored in the fifth entry
-
+                
                 # Forward and backward passes
                 with accelerator.accumulate(foresight):
                     # Zero the parameter gradients
