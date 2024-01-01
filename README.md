@@ -36,7 +36,7 @@ The trained **Foresight** model, with frozen weights, can be embedded in the Cer
 
 ## Usage
 
-See the notebook here for example usage: [Climate Data Example](https://github.com/ap0phasi/cerberusPy/blob/main/tests/example_cerberus.ipynb). This notebook is available on Google Colab [Here](https://colab.research.google.com/github/ap0phasi/cerberusPy/blob/dev_headselection/tests/example_cerberus.ipynb).
+See the notebook here for example usage: [Climate Data Example](https://github.com/ap0phasi/cerberusPy/blob/main/tests/example_cerberus.ipynb). This notebook is available on Google Colab [Here](https://colab.research.google.com/github/ap0phasi/cerberusPy/blob/main/tests/example_cerberus.ipynb).
 
 ## Future Development
 
