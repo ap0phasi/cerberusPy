@@ -211,18 +211,15 @@ class Cerberus(nn.Module):
 from accelerate import Accelerator
 import torch
 
-def train_cerberus(model, prepared_dataloaders, num_epochs):
+def train_cerberus(model, prepared_dataloaders, num_epochs, learning_rate = 0.001):
     # Define a loss function
     criterion = torch.nn.MSELoss()
 
     # Initialize the Accelerator
     accelerator = Accelerator()
-    
-    batch_size = next(iter(prepared_dataloaders[0]))[0].size(0)
-    batch_factor = (batch_size/100) ** 0.5
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=batch_factor*0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     model, optimizer = accelerator.prepare(model, optimizer)
 
     # Training Loop
@@ -280,18 +277,15 @@ class EventualityMSELoss(nn.Module):
             cum_error += nll.mean()
         return cum_error
 
-def train_foresight(foresight, prepared_dataloaders, num_epochs):
+def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate = 0.001):
     # Define a loss function
     criterion = EventualityMSELoss()
 
     # Initialize the Accelerator
     accelerator = Accelerator()
-    
-    batch_size = next(iter(prepared_dataloaders[0]))[0].size(0)
-    batch_factor = (batch_size/100) ** 0.5
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(foresight.parameters(), lr=batch_factor*0.001)
+    optimizer = torch.optim.Adam(foresight.parameters(), lr=learning_rate)
     foresight, optimizer = accelerator.prepare(foresight, optimizer)
 
     # Training Loop
