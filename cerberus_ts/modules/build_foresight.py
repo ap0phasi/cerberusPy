@@ -82,7 +82,21 @@ class EventualityMSELoss(nn.Module):
             cum_error += nll.mean()
         return cum_error
 
-def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate = 0.001):
+class LinearWarmupScheduler(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, warmup_steps, base_lr, max_lr, last_epoch=-1):
+        self.warmup_steps = warmup_steps
+        self.base_lr = base_lr
+        self.max_lr = max_lr
+        super(LinearWarmupScheduler, self).__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        if self.last_epoch < self.warmup_steps:
+            lr = self.base_lr + (self.max_lr - self.base_lr) * (self.last_epoch / self.warmup_steps)
+        else:
+            lr = self.max_lr
+        return [lr for _ in self.optimizer.param_groups]
+
+def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=1e-6):
     # Define a loss function
     criterion = EventualityMSELoss()
 
@@ -92,6 +106,10 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate =
     # Prepare the model and optimizer
     optimizer = torch.optim.Adam(foresight.parameters(), lr=learning_rate)
     foresight, optimizer = accelerator.prepare(foresight, optimizer)
+    
+    # Initialize the learning rate scheduler with warmup
+    lr_scheduler = LinearWarmupScheduler(optimizer, warmup_steps, base_lr, learning_rate)
+
 
     # Training Loop
     for epoch in range(num_epochs):
@@ -101,6 +119,7 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate =
         # Iterator for each prepared DataLoader
         iterators = [iter(dataloader) for dataloader in prepared_dataloaders]
 
+        step = 0  # Initialize step count for warmup updates
         while True:
             try:
                 # Collect batches from each DataLoader
@@ -127,6 +146,10 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate =
                     optimizer.step()
 
                     running_loss += loss.item()
+                    
+                    # Step the learning rate scheduler
+                    lr_scheduler.step(step)
+                    step += 1
 
             except StopIteration:
                 # End of epoch
