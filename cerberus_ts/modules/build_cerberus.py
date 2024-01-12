@@ -5,10 +5,13 @@ import torch.nn.functional as F
 from functools import partial
 
 from .form_neck import FormNeck
+from .form_head import FormHead
 
 class Cerberus(nn.Module):
-    def __init__(self, sizes, feature_indexes, d_neck, head_layers, body_layer_sizes, dropout_rate=0.0, *args, **kwargs):
+    def __init__(self, sizes, feature_indexes, d_neck, head_layers, body_layer_sizes, dropout_rate=0.0, foresight = None, eventualities = 10, *args, **kwargs):
         super(Cerberus, self).__init__()
+        
+        self.foresight = foresight
 
         self.form_necks = FormNeck(sizes, feature_indexes, d_neck, head_layers, dropout_rate, **kwargs)
         self.dropout = nn.Dropout(dropout_rate)
@@ -16,8 +19,25 @@ class Cerberus(nn.Module):
         num_contexts = len([key for key in sizes if 'context' in key])
         call_fl = len(feature_indexes['call'])
         res_fl = len(feature_indexes['response'])
+        
+        # Check if foresight is provided, if so, process it. This will be appended with everything else
+        if self.foresight is not None:
+            res_size = sizes['response']
+            
+            self.foresight_head = FormHead(
+                        channels = eventualities, 
+                        seq_length = res_size,
+                        feature_length = res_fl,
+                        d_neck = d_neck, 
+                        dropout_rate = dropout_rate, 
+                        layers = head_layers, 
+                        out_channels = kwargs['out_channels'], 
+                        kernel_size = kwargs['kernel_size'])
+            num_noncontext = 3
+        else:
+            num_noncontext = 2
 
-        combined_neck_size = d_neck * (2 + num_contexts) + call_fl
+        combined_neck_size = d_neck * (num_noncontext + num_contexts) + call_fl
 
         # Sequentially build the body of Cerberus
         body_layers = []
@@ -34,11 +54,22 @@ class Cerberus(nn.Module):
     def forward(self, x_call, x_contexts, x_response, x_lastknown):
         # Use FormNeck to create necks
         necks = self.form_necks(x_call, x_contexts, x_response)
-
+        
         # Concatenate the last known value to the necks
         combined_input = torch.cat([necks, x_lastknown], dim=1)
+        
+        # If foresight is provided
+        if self.foresight is not None:
+            # Produce foresight
+            foresight_out = self.foresight(x_call, x_contexts, x_response, x_lastknown)
+            foresight_head_out = self.foresight_head(foresight_out)
+            combined_input = torch.cat([combined_input, foresight_head_out], dim = 1)
+
+        # Apply dropout to combined head
         combined_input = self.dropout(combined_input)
-        return self.body(combined_input)
+        
+        out = torch.sigmoid(self.body(combined_input))
+        return out
 
 
 from accelerate import Accelerator
