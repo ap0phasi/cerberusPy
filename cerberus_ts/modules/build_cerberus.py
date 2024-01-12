@@ -3,17 +3,74 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from torch.nn import MultiheadAttention
+import math
 
 def ksize(size):
     return max([1, round(size / 9)])
 
+# Positional Encoder
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        """
+        Arguments:
+            x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
+        """
+        x = x + self.pe[:x.size(0)]
+        return self.dropout(x)
+    
+class MultiChannelMHA_alt(nn.Module):
+    def __init__(self, num_channels, size, feature_len, hsize=128, dropout = 0.0, num_heads=4):
+        super(MultiChannelMHA_alt, self).__init__()
+        # Since features and channels are combined, the embedding dimension increases
+        self.mha = MultiheadAttention(embed_dim=feature_len * num_channels, num_heads=num_heads)
+        self.hsize = hsize
+        self.flatten_dim = size * feature_len
+        self.num_channels = num_channels
+
+        # Positional Encoding Layer
+        self.pos_encoder = PositionalEncoding(feature_len*num_channels, dropout=dropout)
+
+    def forward(self, x):
+        batch_size, channels, height, width = x.shape
+
+        # Reshape and combine channels and features
+        x = x.permute(0, 2, 1, 3).contiguous()  # [batch_size, height, channels, width]
+        x = x.view(batch_size, height, -1)  # [batch_size, height, channels*width]
+
+        # Add Positional Embeddings
+        x = self.pos_encoder(x)
+
+        # Reshape for MultiheadAttention
+        x = x.permute(1, 0, 2)  # [height, batch_size, channels*width]
+
+        # Apply MultiheadAttention
+        mha_output, _ = self.mha(x, x, x)
+        mha_output = mha_output.permute(1, 0, 2)  # [batch_size, height, channels*width]
+
+        return mha_output    
+
 class MultiChannelMHA(nn.Module):
-    def __init__(self, num_channels, size, feature_len, hsize=128, num_heads=4):
+    def __init__(self, num_channels, size, feature_len, hsize=128, dropout = 0.0, num_heads=4):
         super(MultiChannelMHA, self).__init__()
         self.mha_layers = nn.ModuleList([MultiheadAttention(embed_dim=hsize, num_heads=num_heads) for _ in range(num_channels)])
         self.hsize = hsize
         self.flatten_dim = size * feature_len
         self.num_channels = num_channels
+        
+        # Positional Encoding Layer
+        self.pos_encoder = PositionalEncoding(hsize, dropout=dropout)
 
     def forward(self, x):
         batch_size, channels, height, width = x.shape
@@ -27,6 +84,9 @@ class MultiChannelMHA(nn.Module):
             channel_data = channel_data.unsqueeze(-1).expand(-1, -1, self.hsize)
             channel_data = channel_data.permute(1, 0, 2)  # Reshape to [sequence_length, batch_size, embed_dim]
 
+            # Positionally Encode Channel Data
+            channel_data = self.pos_encoder(channel_data)
+            
             mha_output, _ = mha_layer(channel_data, channel_data, channel_data)
             mha_output = mha_output.permute(1, 0, 2)  # Reshape back to [batch_size, sequence_length, embed_dim]
 
@@ -35,9 +95,9 @@ class MultiChannelMHA(nn.Module):
 
         aggregated_output = torch.stack(channel_wise_outputs, dim=1)
         return aggregated_output
-
+    
 class FormHead(nn.Module):
-    def __init__(self, size, feature_len, csize = 128, hsize=128, pool_size = 1, head_layers=None, channels=2):
+    def __init__(self, size, feature_len, csize = 128, hsize=128, pool_size = 1, head_layers=None, dropout = 0.0, channels=2):
         super(FormHead, self).__init__()
 
         if head_layers is None:
@@ -72,7 +132,7 @@ class FormHead(nn.Module):
                 linear_input_size = size * feature_len * layer_hsize
             elif layer_type == "mha":
                 # Assuming a certain configuration for MultiheadAttention. Adjust as necessary.
-                mha_layer = MultiChannelMHA(channels, size, feature_len, layer_hsize, num_heads=4)
+                mha_layer = MultiChannelMHA(channels, size, feature_len, layer_hsize, dropout, num_heads=2)
                 self.layers.append(mha_layer)
                 # Note: MHA layer configuration will depend on your specific requirements
                 linear_input_size = size * feature_len * channels
@@ -99,9 +159,9 @@ class Foresight(nn.Module):
         res_fl = len(feature_indexes['response'])
         context_dims = [[sizes[key], len(feature_indexes[key])]  for key in sizes if 'context' in key]
 
-        self.call_head = FormHead(call_size, call_fl, csize, hsize, pool_size, head_layers)
-        self.context_heads = nn.ModuleList([FormHead(icl[0], icl[1], csize, hsize, pool_size, head_layers) for icl in context_dims])
-        self.response_head = FormHead(res_size, res_fl, csize, hsize, pool_size, head_layers)
+        self.call_head = FormHead(call_size, call_fl, csize, hsize, pool_size, head_layers, dropout)
+        self.context_heads = nn.ModuleList([FormHead(icl[0], icl[1], csize, hsize, pool_size, head_layers, dropout) for icl in context_dims])
+        self.response_head = FormHead(res_size, res_fl, csize, hsize, pool_size, head_layers, dropout)
         
         self.dropout = nn.Dropout(dropout)
         
@@ -159,12 +219,12 @@ class Cerberus(nn.Module):
         res_fl = len(feature_indexes['response'])
         context_dims = [[sizes[key], len(feature_indexes[key])]  for key in sizes if 'context' in key]
 
-        self.call_head = FormHead(call_size, call_fl, csize, hsize, pool_size, head_layers)
-        self.context_heads = nn.ModuleList([FormHead(icl[0], icl[1], csize, hsize, pool_size, head_layers) for icl in context_dims])
-        self.response_head = FormHead(res_size, res_fl, csize, hsize, pool_size, head_layers)
+        self.call_head = FormHead(call_size, call_fl, csize, hsize, pool_size, head_layers, dropout)
+        self.context_heads = nn.ModuleList([FormHead(icl[0], icl[1], csize, hsize, pool_size, head_layers, dropout) for icl in context_dims])
+        self.response_head = FormHead(res_size, res_fl, csize, hsize, pool_size, head_layers, dropout)
         
         if self.foresight is not None:
-            self.foresight_head = FormHead(res_size, res_fl, csize, hsize, pool_size, head_layers, channels=eventualities)
+            self.foresight_head = FormHead(res_size, res_fl, csize, hsize, pool_size, head_layers, dropout, channels=eventualities)
             num_noncontext = 3
         else:
             num_noncontext = 2
@@ -334,3 +394,14 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate =
         param.requires_grad = False
         
     return foresight
+
+
+if __name__ == "__main__":
+    batch_size = 100
+    channels = 2
+    features = 14
+    sequence_length = 24
+    dummy_input = torch.randn(batch_size, channels, sequence_length, features)
+    
+    head = FormHead(sequence_length, features, 128, 128, head_layers = ["mha"], dropout=0.05)
+    print(head(dummy_input).shape)
