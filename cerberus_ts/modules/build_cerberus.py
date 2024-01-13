@@ -97,7 +97,7 @@ def train_cerberus(model, prepared_dataloaders, num_epochs, learning_rate=0.001,
     accelerator = Accelerator()
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=base_lr)
     model, optimizer = accelerator.prepare(model, optimizer)
     
     # Initialize the learning rate scheduler with warmup

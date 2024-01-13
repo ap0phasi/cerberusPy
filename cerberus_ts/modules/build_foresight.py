@@ -104,7 +104,7 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0
     accelerator = Accelerator()
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(foresight.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(foresight.parameters(), lr=base_lr)
     foresight, optimizer = accelerator.prepare(foresight, optimizer)
     
     # Initialize the learning rate scheduler with warmup
