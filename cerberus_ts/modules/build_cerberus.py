@@ -7,6 +7,8 @@ from functools import partial
 from .form_neck import FormNeck
 from .form_head import FormHead
 
+from .training_warmup import LinearWarmupScheduler
+
 class Cerberus(nn.Module):
     def __init__(self, sizes, feature_indexes, d_neck, head_layers, body_layer_sizes, dropout_rate=0.0, foresight = None, eventualities = 10, *args, **kwargs):
         super(Cerberus, self).__init__()
@@ -75,20 +77,6 @@ class Cerberus(nn.Module):
 from accelerate import Accelerator
 import torch
 
-class LinearWarmupScheduler(torch.optim.lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, warmup_steps, base_lr, max_lr, last_epoch=-1):
-        self.warmup_steps = warmup_steps
-        self.base_lr = base_lr
-        self.max_lr = max_lr
-        super(LinearWarmupScheduler, self).__init__(optimizer, last_epoch)
-
-    def get_lr(self):
-        if self.last_epoch < self.warmup_steps:
-            lr = self.base_lr + (self.max_lr - self.base_lr) * (self.last_epoch / self.warmup_steps)
-        else:
-            lr = self.max_lr
-        return [lr for _ in self.optimizer.param_groups]
-
 def train_cerberus(model, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=1e-6):
     # Define a loss function
     criterion = torch.nn.MSELoss()
@@ -97,7 +85,7 @@ def train_cerberus(model, prepared_dataloaders, num_epochs, learning_rate=0.001,
     accelerator = Accelerator()
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=base_lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr)
     model, optimizer = accelerator.prepare(model, optimizer)
     
     # Initialize the learning rate scheduler with warmup

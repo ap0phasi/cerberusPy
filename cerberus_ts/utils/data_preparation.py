@@ -287,7 +287,7 @@ def invert_scaling(scaled_array, min_max_df, feature_range=(0, 1)):
 
 
 class TimeseriesDataPreparer:
-    def __init__(self, df, sizes, thresholds, feature_indexes, window_timesteps, train_len, feature_range=(0, 1), batch_size = 100):
+    def __init__(self, df, sizes, thresholds, feature_indexes, window_timesteps, train_len, feature_range=(0, 1), batch_size = 64):
         self.df = df
         self.sizes = sizes
         self.thresholds = thresholds
@@ -333,7 +333,7 @@ class TimeseriesDataPreparer:
         unmasked = torch.tensor(self.unmasked_response[train_index, :, :], dtype=torch.float32)
 
         datasets = [TensorDataset(calls, context, responses, last_knowns, y, unmasked) for context in contexts]
-        self.dataloaders = [DataLoader(dataset, self.batch_size, shuffle=True, num_workers=2) for dataset in datasets]
+        self.dataloaders = [DataLoader(dataset, self.batch_size, shuffle=True, num_workers=4) for dataset in datasets]
 
         # For CUDA Acceleration
         accelerator = Accelerator()

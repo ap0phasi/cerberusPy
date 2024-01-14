@@ -6,6 +6,7 @@ from functools import partial
 
 from .form_neck import FormNeck
 
+from .training_warmup import LinearWarmupScheduler
 
 class Foresight(nn.Module):
     def __init__(self, sizes, feature_indexes, d_neck, head_layers, body_layer_sizes, dropout_rate=0.0, eventualities = 10, expander_sizes = [128, 256], *args, **kwargs):
@@ -82,19 +83,6 @@ class EventualityMSELoss(nn.Module):
             cum_error += nll.mean()
         return cum_error
 
-class LinearWarmupScheduler(torch.optim.lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, warmup_steps, base_lr, max_lr, last_epoch=-1):
-        self.warmup_steps = warmup_steps
-        self.base_lr = base_lr
-        self.max_lr = max_lr
-        super(LinearWarmupScheduler, self).__init__(optimizer, last_epoch)
-
-    def get_lr(self):
-        if self.last_epoch < self.warmup_steps:
-            lr = self.base_lr + (self.max_lr - self.base_lr) * (self.last_epoch / self.warmup_steps)
-        else:
-            lr = self.max_lr
-        return [lr for _ in self.optimizer.param_groups]
 
 def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=1e-6):
     # Define a loss function
@@ -104,12 +92,11 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0
     accelerator = Accelerator()
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.Adam(foresight.parameters(), lr=base_lr)
+    optimizer = torch.optim.AdamW(foresight.parameters(), lr=base_lr)
     foresight, optimizer = accelerator.prepare(foresight, optimizer)
     
     # Initialize the learning rate scheduler with warmup
     lr_scheduler = LinearWarmupScheduler(optimizer, warmup_steps, base_lr, learning_rate)
-
 
     # Training Loop
     for epoch in range(num_epochs):

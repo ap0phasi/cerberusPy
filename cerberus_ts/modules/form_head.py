@@ -81,7 +81,7 @@ class FormHead_Option2(nn.Module):
     
 # To Select one of the FormHead options
 class FormHead(nn.Module):
-    def __init__(self, option = 'option1', *args, **kwargs):
+    def __init__(self, option = 'option2', *args, **kwargs):
         super(FormHead, self).__init__()
         if option == 'option1':
             self.head = FormHead_Option1(*args, **kwargs)
