@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .conv_processor import ConvProcessor
+from .processor import InputProcessor
 from .attention_aggregator import AttentionAggregator
 
 class FormHead_Option1(nn.Module):
@@ -14,7 +14,7 @@ class FormHead_Option1(nn.Module):
             setattr(self, key, value)
         
         # Establish Layers
-        self.processor = ConvProcessor(channels, self.out_channels, seq_length, feature_length, self.kernel_size, dropout_rate, layers)
+        self.processor = InputProcessor(in_channels = channels, seq_length=seq_length, feature_length=feature_length, dropout_rate=dropout_rate, layers=layers, **kwargs)
         self.aggregator = AttentionAggregator(channels, seq_length, feature_length, d_neck)
         
     def forward(self, x):
@@ -81,7 +81,7 @@ class FormHead_Option2(nn.Module):
     
 # To Select one of the FormHead options
 class FormHead(nn.Module):
-    def __init__(self, option = 'option2', *args, **kwargs):
+    def __init__(self, option = 'option1', *args, **kwargs):
         super(FormHead, self).__init__()
         if option == 'option1':
             self.head = FormHead_Option1(*args, **kwargs)

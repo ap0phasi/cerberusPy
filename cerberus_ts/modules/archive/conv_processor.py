@@ -47,7 +47,7 @@ if __name__=="__main__":
     batches = 10
     channels = 3
     seq_length = 32
-    feature_length = 32
+    feature_length = 16
 
     out_channels = 12  # Should be a multiple of channels for split averaging
     kernel_size = 3
