@@ -5,9 +5,12 @@ import torch.nn.functional as F
 from .processor import InputProcessor
 from .attention_aggregator import AttentionAggregator
 
-class FormHead_Option1(nn.Module):
+# Load in configuration
+from ..utils.cerberus_config import CerberusConfig
+
+class FormHead_Preserve(nn.Module):
     def __init__(self, channels, seq_length, feature_length, d_neck, dropout_rate, layers, *args, **kwargs):
-        super(FormHead_Option1, self).__init__()
+        super(FormHead_Preserve, self).__init__()
 
         # Assign additional keyword arguments
         for key, value in kwargs.items():
@@ -27,9 +30,9 @@ class FormHead_Option1(nn.Module):
 def ksize(size):
     return max([1, round(size / 9)])
 
-class FormHead_Option2(nn.Module):
+class FormHead_Flatten(nn.Module):
     def __init__(self, channels, seq_length, feature_length, d_neck, dropout_rate, layers, *args, **kwargs):
-        super(FormHead_Option2, self).__init__()
+        super(FormHead_Flatten, self).__init__()
         
         pool_size = 1
         head_layers = layers
@@ -79,19 +82,24 @@ class FormHead_Option2(nn.Module):
         x = F.leaky_relu(self.fc(x))
         return x
     
-# To Select one of the FormHead options
 class FormHead(nn.Module):
-    def __init__(self, option = 'option1', *args, **kwargs):
+    def __init__(self, option=None, *args, **kwargs):
         super(FormHead, self).__init__()
-        if option == 'option1':
-            self.head = FormHead_Option1(*args, **kwargs)
-        elif option == 'option2':
-            self.head = FormHead_Option2(*args, **kwargs)
+
+        # Use the current value of CerberusConfig.processor_type if option is not provided
+        if option is None:
+            option = CerberusConfig.processor_type
+            
+        if option == 'flatten':
+            self.head = FormHead_Flatten(*args, **kwargs)
+        elif option == 'preserve':
+            self.head = FormHead_Preserve(*args, **kwargs)
         else:
             raise ValueError("Invalid option for FormHead")
 
     def forward(self, x):
         return self.head(x)
+
 
 if __name__=="__main__":
     # Example usage

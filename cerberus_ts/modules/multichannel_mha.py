@@ -22,6 +22,7 @@ class PositionalEncoding(nn.Module):
         Arguments:
             x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
         """
+        
         x = x + self.pe[:x.size(0)]
         return self.dropout(x) 
 
@@ -31,25 +32,49 @@ class ChannelWiseMultiHeadAttention(nn.Module):
         super(ChannelWiseMultiHeadAttention, self).__init__()
         self.channels = channels
         self.feature_length = feature_length
-        self.multihead_attn = nn.MultiheadAttention(embed_dim=feature_length, num_heads=num_heads)
         
-        self.pos_encoder = PositionalEncoding(d_model = feature_length, dropout=dropout_rate)
+        # Determine the projection dimension
+        if feature_length % num_heads != 0:
+            # Our feature length must be divisible by 2 times heads
+            self.proj_dim = max(2 * num_heads, ((feature_length + num_heads - 1) // num_heads) * num_heads)
+            self.proj_layer = nn.Linear(feature_length, self.proj_dim)
+        else:
+            self.proj_dim = feature_length
+            self.proj_layer = None
+
+        self.multihead_attn = nn.MultiheadAttention(embed_dim=self.proj_dim, num_heads=num_heads)
+        
+        self.pos_encoder = PositionalEncoding(d_model = self.proj_dim, dropout=dropout_rate)
 
     def forward(self, x):
         # x shape: [batch_size, channels, sequence_length, feature_length]
         batch_size, channels, seq_length, feature_length = x.size()
 
+        # Apply projection if necessary
+        if self.proj_layer is not None:
+            x = x.view(-1, feature_length)
+            x = self.proj_layer(x)
+            x = x.view(batch_size, channels, seq_length, self.proj_dim)
+
         # Reshape: Merge batch and channels dimension
-        x = x.view(batch_size * channels, seq_length, feature_length)
+        x = x.view(batch_size * channels, seq_length, self.proj_dim)
         
         # Apply positional encoding
         x = self.pos_encoder(x)
-
+        
         # Apply MultiHeadAttention (assuming query, key, value are the same)
         attn_output, _ = self.multihead_attn(x, x, x)
 
         # Reshape: Split batch and channels dimension
-        attn_output = attn_output.view(batch_size, channels, seq_length, feature_length)
+        attn_output = attn_output.view(batch_size, channels, seq_length, self.proj_dim)
+        
+        # If projection was applied, add a layer to project back to original feature_length
+        if self.proj_layer is not None:
+            attn_output = attn_output.view(-1, self.proj_dim)
+            # Assuming a simple linear layer for reverse projection (this could be improved)
+            reverse_proj_layer = nn.Linear(self.proj_dim, feature_length)
+            attn_output = reverse_proj_layer(attn_output)
+            attn_output = attn_output.view(batch_size, channels, seq_length, feature_length)
 
         return attn_output
     
@@ -58,18 +83,11 @@ if __name__=="__main__":
     batches = 10
     channels = 3
     seq_length = 32
-    feature_length = 16
+    feature_length = 3
 
     model = ChannelWiseMultiHeadAttention(channels=2,feature_length=feature_length, num_heads= 4, dropout_rate=0.0)
 
     input_tensor = torch.randn(batches, channels, seq_length, feature_length) 
-    
-    pos_encoder = PositionalEncoding(d_model = 16, dropout=0.0)
-    mha_test = MultiheadAttention(embed_dim=16, num_heads=8)
-    single_channel = input_tensor[:,0,:,:]
-    in_channel = pos_encoder(single_channel)
-    
-    output_tensor = mha_test(in_channel,in_channel,in_channel)[0]
     
     output_tensor = model(input_tensor)
 

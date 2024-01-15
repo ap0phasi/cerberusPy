@@ -20,8 +20,7 @@ class FormNeck(nn.Module):
                          d_neck = d_neck, 
                          dropout_rate = dropout_rate, 
                          layers = head_layers, 
-                         out_channels = kwargs['out_channels'], 
-                         kernel_size = kwargs['kernel_size'])
+                         **kwargs)
         
         self.call_head = partial_head(seq_length = call_size, feature_length = call_fl)
         self.context_heads = nn.ModuleList([ partial_head(seq_length = icl[0], feature_length = icl[1]) for icl in context_dims ])

@@ -8,6 +8,9 @@ from .form_neck import FormNeck
 
 from .training_warmup import LinearWarmupScheduler
 
+# Load in configuration
+from ..utils.cerberus_config import CerberusConfig
+
 class Foresight(nn.Module):
     def __init__(self, sizes, feature_indexes, d_neck, head_layers, body_layer_sizes, dropout_rate=0.0, eventualities = 10, expander_sizes = [128, 256], *args, **kwargs):
         super(Foresight, self).__init__()
@@ -50,7 +53,10 @@ class Foresight(nn.Module):
         
         # Add the final layer transitioning to 'eventualities' channels with Sigmoid activation
         decoder_layers.append(nn.ConvTranspose2d(in_channels, eventualities, kernel_size=3, stride=1, padding=1))
-        decoder_layers.append(nn.Sigmoid())
+        
+        # If we are using a residual connection, we don't want the last decoder layer to be sigmoid
+        if not CerberusConfig.foresight_residual:
+            decoder_layers.append(nn.Sigmoid())
 
         self.decoder = nn.Sequential(*decoder_layers)
 
@@ -65,6 +71,10 @@ class Foresight(nn.Module):
         necks = F.leaky_relu(self.expander(body))
         necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
         out = self.decoder(necks)
+        
+        if CerberusConfig.foresight_residual:
+            # Add Residual Connection
+            out = out + x_response[:,0:1,:,:]
         return out
 
 

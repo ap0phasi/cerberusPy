@@ -22,7 +22,7 @@ class InputProcessor(nn.Module):
             proc = nn.Conv2d(in_channels, out_channels, kwargs['kernel_size'], padding=padding)
             norm = nn.LayerNorm([out_channels, seq_length, feature_length])
         elif type == "mha":
-            proc = ChannelWiseMultiHeadAttention(channels=in_channels, feature_length=feature_length, num_heads= kwargs['num_heads'], dropout_rate=0.0)
+            proc = ChannelWiseMultiHeadAttention(channels=in_channels, feature_length=feature_length, num_heads = kwargs['num_heads'], dropout_rate=0.0)
             norm = nn.LayerNorm([in_channels, seq_length, feature_length])
         relu = nn.LeakyReLU()
         dropout = nn.Dropout(dropout_rate)
@@ -54,12 +54,14 @@ if __name__=="__main__":
     batches = 10
     channels = 3
     seq_length = 32
-    feature_length = 16
+    feature_length = 8
 
-    out_channels = 6 # Should be a multiple of channels for split averaging
+    out_channels = 3 # Should be a multiple of channels for split averaging
     kernel_size = 3
     dropout_rate = 0.5
+    layers = ["mha"]
     layers = ["conv","conv"]
+    layers = ["mha","conv","conv"]
     num_heads = 4
 
     model = InputProcessor(channels, out_channels, seq_length, feature_length, dropout_rate, layers, kernel_size = kernel_size, num_heads = num_heads)
