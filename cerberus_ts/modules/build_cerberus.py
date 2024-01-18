@@ -39,7 +39,8 @@ class Cerberus(nn.Module):
         else:
             num_noncontext = 2
 
-        combined_neck_size = d_neck * (num_noncontext + num_contexts) + call_fl
+        # The size of the combined necks is the neck dimension times the number of contexts, plus a call and a response
+        combined_neck_size = d_neck * (num_noncontext + num_contexts)
 
         # Sequentially build the body of Cerberus
         body_layers = []
@@ -50,15 +51,16 @@ class Cerberus(nn.Module):
             body_layers.append(nn.LeakyReLU())
             last_size = size
 
-        body_layers.append(nn.Linear(last_size, res_fl))
         self.body = nn.Sequential(*body_layers)
+        
+        # We will be concatenating to the last layer of the body, so the last size will need to include those features.
+        self.feet = nn.Linear(last_size + call_fl, res_fl)
 
     def forward(self, x_call, x_contexts, x_response, x_lastknown):
         # Use FormNeck to create necks
         necks = self.form_necks(x_call, x_contexts, x_response)
         
-        # Concatenate the last known value to the necks
-        combined_input = torch.cat([necks, x_lastknown], dim=1)
+        combined_input = necks
         
         # If foresight is provided
         if self.foresight is not None:
@@ -70,7 +72,12 @@ class Cerberus(nn.Module):
         # Apply dropout to combined head
         combined_input = self.dropout(combined_input)
         
-        out = torch.sigmoid(self.body(combined_input))
+        body_out = torch.sigmoid(self.body(combined_input))
+        
+        # We will include the last known at the end of the body
+        body_out = torch.cat([body_out, x_lastknown], dim=1)
+        
+        out = torch.sigmoid(self.feet(body_out))
         return out
 
 

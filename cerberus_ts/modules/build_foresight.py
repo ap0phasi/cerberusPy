@@ -23,7 +23,8 @@ class Foresight(nn.Module):
         res_fl = len(feature_indexes['response'])
         res_size = sizes['response']
 
-        combined_neck_size = d_neck * (2 + num_contexts) + call_fl
+        # The size of the combined necks is the neck dimension times the number of contexts, plus a call and a response
+        combined_neck_size = d_neck * (2 + num_contexts)
 
         # Sequentially build the body of Cerberus
         body_layers = []
@@ -33,6 +34,9 @@ class Foresight(nn.Module):
             body_layers.append(nn.Linear(last_size, size))
             body_layers.append(nn.LeakyReLU())
             last_size = size
+        
+        # We will be including the last knowns after the boyd
+        last_size = call_fl + last_size
 
         self.body = nn.Sequential(*body_layers)
         
@@ -64,11 +68,12 @@ class Foresight(nn.Module):
         # Use FormNeck to create necks
         necks = self.form_necks(x_call, x_contexts, x_response)
 
-        # Concatenate the last known value to the necks
-        combined_input = torch.cat([necks, x_lastknown], dim=1)
+        combined_input = necks
         combined_input = self.dropout(combined_input)
-        body = self.body(combined_input)
-        necks = F.leaky_relu(self.expander(body))
+        body_out = self.body(combined_input)
+        
+        body_out = torch.cat([body_out, x_lastknown], dim=1)
+        necks = F.leaky_relu(self.expander(body_out))
         necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
         out = self.decoder(necks)
         
