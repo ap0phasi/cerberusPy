@@ -84,7 +84,7 @@ class Cerberus(nn.Module):
 from accelerate import Accelerator
 import torch
 
-def train_cerberus(model, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=1e-6):
+def train_cerberus(model, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=0.001):
     # Define a loss function
     criterion = torch.nn.MSELoss()
 
