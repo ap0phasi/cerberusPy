@@ -72,7 +72,7 @@ class Cerberus(nn.Module):
         # Apply dropout to combined head
         combined_input = self.dropout(combined_input)
         
-        body_out = torch.sigmoid(self.body(combined_input))
+        body_out = self.body(combined_input)
         
         # We will include the last known at the end of the body
         body_out = torch.cat([body_out, x_lastknown], dim=1)
