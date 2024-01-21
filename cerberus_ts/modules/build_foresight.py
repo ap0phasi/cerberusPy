@@ -23,8 +23,8 @@ class Foresight(nn.Module):
         res_fl = len(feature_indexes['response'])
         res_size = sizes['response']
 
-        # The size of the combined necks is the neck dimension times the number of contexts, plus a call and a response
-        combined_neck_size = d_neck * (2 + num_contexts)
+        # The size of all the combined necks will be based on the number of contexts, the call and response, as well as the last known
+        combined_neck_size = d_neck * (2 + num_contexts) + call_fl
 
         # Sequentially build the body of Cerberus
         body_layers = []
@@ -32,11 +32,13 @@ class Foresight(nn.Module):
 
         for size in body_layer_sizes:
             body_layers.append(nn.Linear(last_size, size))
+            # Batch Normalization layer
+            bn_layer = nn.BatchNorm1d(size)  # size corresponds to the number of features in the linear layer
+            body_layers.append(bn_layer)
+
+            # Activation layer
             body_layers.append(nn.LeakyReLU())
             last_size = size
-        
-        # We will be including the last knowns after the boyd
-        last_size = call_fl + last_size
 
         self.body = nn.Sequential(*body_layers)
         
@@ -68,12 +70,11 @@ class Foresight(nn.Module):
         # Use FormNeck to create necks
         necks = self.form_necks(x_call, x_contexts, x_response)
 
-        combined_input = necks
+        # Concatenate the last known value to the necks
+        combined_input = torch.cat([necks, x_lastknown], dim=1)
         combined_input = self.dropout(combined_input)
-        body_out = self.body(combined_input)
-        
-        body_out = torch.cat([body_out, x_lastknown], dim=1)
-        necks = F.leaky_relu(self.expander(body_out))
+        body = self.body(combined_input)
+        necks = F.leaky_relu(self.expander(body))
         necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
         out = self.decoder(necks)
         
@@ -99,7 +100,7 @@ class EventualityMSELoss(nn.Module):
         return cum_error
 
 
-def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=0.001):
+def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=1e-6):
     # Define a loss function
     criterion = EventualityMSELoss()
 

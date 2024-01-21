@@ -61,6 +61,11 @@ class FormHead_Flatten(nn.Module):
             if layer_type == "conv":
                 conv_layer = nn.Conv2d(current_channels, layer_hsize, kernel_size=(ksize(size), ksize(feature_length)))
                 self.layers.append(conv_layer)
+                # Batch Normalization layer
+                bn_layer = nn.BatchNorm2d(layer_hsize)  # Make sure to use the correct number of features
+                self.layers.append(bn_layer)
+
+                # Activation layer
                 self.layers.append(nn.LeakyReLU())
                 self.layers.append(nn.MaxPool2d(layer_pool_size,layer_pool_size))
                 current_channels = layer_hsize
