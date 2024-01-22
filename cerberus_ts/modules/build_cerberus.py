@@ -84,7 +84,7 @@ class Cerberus(nn.Module):
 from accelerate import Accelerator
 import torch
 
-def train_cerberus(model, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=1e-6):
+def train_cerberus(model, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=1e-6, weight_decay = 0.0):
     # Define a loss function
     criterion = torch.nn.MSELoss()
 
@@ -92,7 +92,7 @@ def train_cerberus(model, prepared_dataloaders, num_epochs, learning_rate=0.001,
     accelerator = Accelerator()
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay = weight_decay)
     model, optimizer = accelerator.prepare(model, optimizer)
     
     # Initialize the learning rate scheduler with warmup

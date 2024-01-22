@@ -23,7 +23,7 @@ class Foresight(nn.Module):
         res_fl = len(feature_indexes['response'])
         res_size = sizes['response']
 
-        # The size of all the combined necks will be based on the number of contexts, the call and response, as well as the last known
+        
         combined_neck_size = d_neck * (2 + num_contexts) + call_fl
 
         # Sequentially build the body of Cerberus
@@ -100,7 +100,7 @@ class EventualityMSELoss(nn.Module):
         return cum_error
 
 
-def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=1e-6):
+def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=1e-6, weight_decay = 0.0):
     # Define a loss function
     criterion = EventualityMSELoss()
 
@@ -108,7 +108,7 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0
     accelerator = Accelerator()
 
     # Prepare the model and optimizer
-    optimizer = torch.optim.AdamW(foresight.parameters(), lr=base_lr)
+    optimizer = torch.optim.AdamW(foresight.parameters(), lr=base_lr, weight_decay = weight_decay)
     foresight, optimizer = accelerator.prepare(foresight, optimizer)
     
     # Initialize the learning rate scheduler with warmup
