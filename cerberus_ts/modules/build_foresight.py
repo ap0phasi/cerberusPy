@@ -119,21 +119,23 @@ def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0
         foresight.train()
         running_loss = 0.0
 
-        # Iterator for each prepared DataLoader
-        iterators = [iter(dataloader) for dataloader in prepared_dataloaders]
+        # Set up iterator from prepared dataloader
+        iterator = iter(prepared_dataloaders)
 
         step = 0  # Initialize step count for warmup updates
         while True:
             try:
-                # Collect batches from each DataLoader
-                batches = [next(iterator) for iterator in iterators]
+                # Collect batch
+                batch = next(iterator)
                 
                 # Prepare data for the model
-                calls_batch = next(batch[0] for batch in batches)
-                contexts_batch = [batch[1] for batch in batches]
-                responses_batch = next(batch[2] for batch in batches)
-                last_knowns_batch = next(batch[3] for batch in batches)
-                unmasked_batch = next(batch[5] for batch in batches) # Unmasked is stored in the fifth entry
+                calls_batch = batch[0]
+                responses_batch = batch[1]
+                last_knowns_batch = batch[2]
+                # Unmasked is index 4
+                unmasked_batch = batch[4] 
+                
+                contexts_batch = batch[5:]
                 
                 # Forward and backward passes
                 with accelerator.accumulate(foresight):

@@ -331,13 +331,14 @@ class TimeseriesDataPreparer:
         y = torch.tensor(self.response_data[train_index, :], dtype=torch.float32)
         # For foresight we also need the unmasked response prepared
         unmasked = torch.tensor(self.unmasked_response[train_index, :, :], dtype=torch.float32)
-
-        datasets = [TensorDataset(calls, context, responses, last_knowns, y, unmasked) for context in contexts]
-        self.dataloaders = [DataLoader(dataset, self.batch_size, shuffle=True, num_workers=4) for dataset in datasets]
-
+        
+        # Unpack the contexts to the end of our tensor dataset. 
+        dataset = TensorDataset(calls, responses, last_knowns, y, unmasked, *contexts)
+        self.dataloaders = DataLoader(dataset, self.batch_size, shuffle=True, num_workers=4)
+        
         # For CUDA Acceleration
         accelerator = Accelerator()
-        self.dataloaders = [accelerator.prepare(dataloader) for dataloader in self.dataloaders]
+        self.dataloaders = accelerator.prepare(self.dataloaders)
 
 class ResponseGenerator:
     def __init__(self, model, sliced_data, feature_indexes, max_change_dfs):

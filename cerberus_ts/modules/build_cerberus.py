@@ -103,21 +103,23 @@ def train_cerberus(model, prepared_dataloaders, num_epochs, learning_rate=0.001,
         model.train()
         running_loss = 0.0
 
-        # Iterator for each prepared DataLoader
-        iterators = [iter(dataloader) for dataloader in prepared_dataloaders]
+        # Set up iterator from prepared dataloader
+        iterator = iter(prepared_dataloaders)
 
         step = 0  # Initialize step count for warmup updates
         while True:
             try:
-                # Collect batches from each DataLoader
-                batches = [next(iterator) for iterator in iterators]
+                # Collect batch
+                batch = next(iterator)
 
                 # Prepare data for the model
-                calls_batch = next(batch[0] for batch in batches)
-                contexts_batch = [batch[1] for batch in batches]
-                responses_batch = next(batch[2] for batch in batches)
-                last_knowns_batch = next(batch[3] for batch in batches)
-                y_batch = next(batch[4] for batch in batches)
+                calls_batch = batch[0]
+                responses_batch = batch[1]
+                last_knowns_batch = batch[2]
+                y_batch = batch[3]
+                
+                # unmaked is on index 4, everything after that is contexts
+                contexts_batch = batch[5:]
 
                 # Forward and backward passes
                 with accelerator.accumulate(model):
