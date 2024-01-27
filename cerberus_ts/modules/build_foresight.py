@@ -100,7 +100,7 @@ class EventualityMSELoss(nn.Module):
         return cum_error
 
 
-def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=1e-6, weight_decay = 0.0):
+def train_foresight(foresight, prepared_dataloaders, num_epochs, learning_rate=0.001, warmup_steps=100, base_lr=0.001, weight_decay = 0.0):
     # Define a loss function
     criterion = EventualityMSELoss()
 

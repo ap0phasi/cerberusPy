@@ -1,5 +1,13 @@
-
-cerberusPy/__pycache__/*
-cerberus_torch/__pycache__/*
+**/__pycache__/
 cerberusPy/scratch.py
 venv
+cerberus_ts/modules/__pycache__/build_cerberus.cpython-38.pyc
+cerberus_ts/modules/__pycache__/form_head.cpython-38.pyc
+cerberus_ts/modules/__pycache__/form_neck.cpython-38.pyc
+cerberus_ts/utils/__pycache__/cerberus_config.cpython-38.pyc
+cerberus_ts/utils/__pycache__/data_preparation.cpython-38.pyc
+cerberus_ts/modules/__pycache__/build_cerberus.cpython-38.pyc
+cerberus_ts/modules/__pycache__/form_head.cpython-38.pyc
+cerberus_ts/modules/__pycache__/form_neck.cpython-38.pyc
+cerberus_ts/utils/__pycache__/cerberus_config.cpython-38.pyc
+cerberus_ts/utils/__pycache__/data_preparation.cpython-38.pyc

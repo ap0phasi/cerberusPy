@@ -120,7 +120,7 @@ if __name__=="__main__":
     
     d_neck = 24
     
-    model = FormHead(channels = channels, 
+    model = FormHead_Flatten(channels = channels, 
                      seq_length=seq_length, 
                      feature_length=feature_length, 
                      d_neck=d_neck, 
