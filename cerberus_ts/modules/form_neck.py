@@ -25,8 +25,6 @@ class FormNeck(nn.Module):
         self.call_head = partial_head(seq_length = call_size, feature_length = call_fl)
         self.context_heads = nn.ModuleList([ partial_head(seq_length = icl[0], feature_length = icl[1]) for icl in context_dims ])
         self.response_head = partial_head(seq_length = res_size, feature_length = res_fl)
-
-        self.dropout = nn.Dropout(dropout_rate)
         
     def forward(self, x_call, x_contexts, x_response):
         # Produce call, context, and masked response heads

@@ -12,29 +12,33 @@ from .training_warmup import LinearWarmupScheduler
 from ..utils.cerberus_config import CerberusConfig
 
 class Foresight(nn.Module):
-    def __init__(self, sizes, feature_indexes, d_neck, head_layers, body_layer_sizes, dropout_rate=0.0, eventualities = 10, expander_sizes = [128, 256], *args, **kwargs):
+    def __init__(self, sizes, feature_indexes, d_neck, head_layers, body_layer_sizes, dropout_rate=0.0, eventualities=10, expander_sizes=[128, 256], last_known_loc=0, *args, **kwargs):
         super(Foresight, self).__init__()
 
         self.form_necks = FormNeck(sizes, feature_indexes, d_neck, head_layers, dropout_rate, **kwargs)
         self.dropout = nn.Dropout(dropout_rate)
+        self.last_known_loc = last_known_loc
 
         num_contexts = len([key for key in sizes if 'context' in key])
         call_fl = len(feature_indexes['call'])
         res_fl = len(feature_indexes['response'])
         res_size = sizes['response']
 
-        
-        combined_neck_size = d_neck * (2 + num_contexts) + call_fl
+        combined_neck_size = d_neck * (2 + num_contexts)
 
-        # Sequentially build the body of Cerberus
+        # Sequentially build the body
         body_layers = []
         last_size = combined_neck_size
+        
+        if self.last_known_loc == 0:
+            last_size += call_fl
 
-        for size in body_layer_sizes:
+        for i, size in enumerate(body_layer_sizes):
+            if i+1 == self.last_known_loc:
+                # Adjust last_size to include x_lastknown size
+                last_size += call_fl
+
             body_layers.append(nn.Linear(last_size, size))
-            # Batch Normalization layer
-            bn_layer = nn.BatchNorm1d(size)  # size corresponds to the number of features in the linear layer
-            body_layers.append(bn_layer)
 
             # Activation layer
             body_layers.append(nn.LeakyReLU())
@@ -42,45 +46,51 @@ class Foresight(nn.Module):
 
         self.body = nn.Sequential(*body_layers)
         
-        # Parameters for reshaping the output of the linear layer
-        self.reshape_channels = expander_sizes[0]  # Assuming the first element is used for reshaping
+        self.reshape_channels = expander_sizes[0]
         self.reshape_height = res_size
         self.reshape_width = res_fl
 
         self.expander = nn.Linear(last_size, self.reshape_channels * self.reshape_height * self.reshape_width)
         
-        # Dynamically create the decoder layers based on expander_args
+        # Decoder layers
         decoder_layers = []
         in_channels = self.reshape_channels
         for out_channels in expander_sizes:
             decoder_layers.append(nn.ConvTranspose2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1))
             decoder_layers.append(nn.LeakyReLU())
             in_channels = out_channels
-        
-        # Add the final layer transitioning to 'eventualities' channels with Sigmoid activation
+
         decoder_layers.append(nn.ConvTranspose2d(in_channels, eventualities, kernel_size=3, stride=1, padding=1))
         
-        # If we are using a residual connection, we don't want the last decoder layer to be sigmoid
         if not CerberusConfig.foresight_residual:
             decoder_layers.append(nn.Sigmoid())
 
         self.decoder = nn.Sequential(*decoder_layers)
 
     def forward(self, x_call, x_contexts, x_response, x_lastknown):
-        # Use FormNeck to create necks
         necks = self.form_necks(x_call, x_contexts, x_response)
 
-        # Concatenate the last known value to the necks
-        combined_input = torch.cat([necks, x_lastknown], dim=1)
+        if self.last_known_loc == 0:
+            # Original behavior
+            combined_input = torch.cat([necks, x_lastknown], dim=1)
+        else:
+            combined_input = necks
+        
         combined_input = self.dropout(combined_input)
-        body = self.body(combined_input)
-        necks = F.leaky_relu(self.expander(body))
+
+        # Process through body layers
+        for i, layer in enumerate(self.body):
+            if i+1 == self.last_known_loc:
+                combined_input = torch.cat([combined_input, x_lastknown], dim=1)
+            combined_input = layer(combined_input)
+
+        necks = F.leaky_relu(self.expander(combined_input))
         necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
         out = self.decoder(necks)
         
         if CerberusConfig.foresight_residual:
-            # Add Residual Connection
             out = out + x_response[:,0:1,:,:]
+
         return out
 
 
