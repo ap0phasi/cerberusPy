@@ -45,6 +45,7 @@ class Cerberus(nn.Module):
 
         # Sequentially build the body of Cerberus
         body_layers = []
+
         last_size = combined_neck_size
         
         if self.last_known_loc == 0:
@@ -56,12 +57,11 @@ class Cerberus(nn.Module):
                 last_size += call_fl
 
             body_layers.append(nn.Linear(last_size, size))
-
-            # Activation layer
-            body_layers.append(nn.LeakyReLU())
+            
             last_size = size
 
         body_layers.append(nn.Linear(last_size, res_fl))
+        
         self.body = nn.Sequential(*body_layers)
 
     def forward(self, x_call, x_contexts, x_response, x_lastknown):
@@ -86,7 +86,10 @@ class Cerberus(nn.Module):
                 # Concatenate x_lastknown at the specified layer
                 combined_input = torch.cat([combined_input, x_lastknown], dim=1)
             combined_input = layer(combined_input)
-
+            
+            if i < len(self.body) - 1:
+                combined_input = F.leaky_relu(combined_input)
+            
         out = torch.sigmoid(combined_input)
         return out
 

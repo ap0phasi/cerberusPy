@@ -28,6 +28,7 @@ class Foresight(nn.Module):
 
         # Sequentially build the body
         body_layers = []
+        
         last_size = combined_neck_size
         
         if self.last_known_loc == 0:
@@ -39,9 +40,7 @@ class Foresight(nn.Module):
                 last_size += call_fl
 
             body_layers.append(nn.Linear(last_size, size))
-
-            # Activation layer
-            body_layers.append(nn.LeakyReLU())
+            
             last_size = size
 
         self.body = nn.Sequential(*body_layers)
@@ -83,6 +82,8 @@ class Foresight(nn.Module):
             if i+1 == self.last_known_loc:
                 combined_input = torch.cat([combined_input, x_lastknown], dim=1)
             combined_input = layer(combined_input)
+            
+            combined_input = F.leaky_relu(combined_input)
 
         necks = F.leaky_relu(self.expander(combined_input))
         necks = necks.view(-1, self.reshape_channels, self.reshape_height, self.reshape_width)
