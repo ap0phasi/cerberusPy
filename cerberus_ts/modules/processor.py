@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from .multichannel_mha import ChannelWiseMultiHeadAttention
+from .multichannel_mamba import ChannelWiseMamba
 
 class InputProcessor(nn.Module):
     def __init__(self, in_channels, out_channels, seq_length, feature_length, dropout_rate, layers, *args, **kwargs):
@@ -23,6 +24,9 @@ class InputProcessor(nn.Module):
             norm = nn.LayerNorm([out_channels, seq_length, feature_length])
         elif type == "mha":
             proc = ChannelWiseMultiHeadAttention(channels=in_channels, feature_length=feature_length, num_heads = kwargs['num_heads'], dropout_rate=0.0)
+            norm = nn.LayerNorm([in_channels, seq_length, feature_length])
+        elif type == "mamba":
+            proc = ChannelWiseMamba(channels=in_channels, feature_length=feature_length, dropout_rate=0.0)
             norm = nn.LayerNorm([in_channels, seq_length, feature_length])
         relu = nn.LeakyReLU()
         dropout = nn.Dropout(dropout_rate)
