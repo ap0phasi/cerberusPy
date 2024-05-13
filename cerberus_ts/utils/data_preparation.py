@@ -230,6 +230,7 @@ def make_torch_tensor(channel_array):
     
     return both_channels
 
+
 def denormalize_response(normalized_df, max_change_df, initial_value):
     reconstructed_array = []
     new_value = initial_value
@@ -243,13 +244,12 @@ def denormalize_response(normalized_df, max_change_df, initial_value):
     return pd.DataFrame(reconstructed_array)
 
 def generate_predictions(model,selected_data):
-    calls = make_torch_tensor(selected_data['call'])
-    contexts = [make_torch_tensor(selected_data[key]) for key in selected_data if 'context' in key]
-    responses = make_torch_tensor(np.zeros([1,selected_data['response'].shape[1],selected_data['response'].shape[2]]))
+    calls = make_torch_tensor(selected_data['call']).to('cuda')
+    contexts = [make_torch_tensor(selected_data[key]).to('cuda') for key in selected_data if 'context' in key]
+    responses = make_torch_tensor(np.zeros([1,selected_data['response'].shape[1],selected_data['response'].shape[2]])).to('cuda')
 
     # Last knowns isn't coil-normalized so we won't process it as such
-    last_knowns = torch.tensor(selected_data['last_known'][:,0,:], dtype=torch.float32)
-
+    last_knowns = torch.tensor(selected_data['last_known'][:,0,:], dtype=torch.float32).to("cuda")
     respones_generated = []
     for igen in range(responses.shape[2]):
         with torch.no_grad():
@@ -262,7 +262,7 @@ def generate_predictions(model,selected_data):
                 # In the case where the first channel is 0, we will assume this denotes a NaN, so we will replace it like this:
                 responses[0,1,igen,:][responses[0,0,igen,:] == 0] = 0
             
-            respones_generated.append(res_out[0].numpy())
+            respones_generated.append(res_out[0].to("cpu").numpy())
         
     return np.vstack(respones_generated)
 def invert_scaling(scaled_array, min_max_df, feature_range=(0, 1)):
@@ -357,7 +357,7 @@ class ResponseGenerator:
 
     def generate_response(self, sel_index):
         # Move model to CPU and set to evaluation mode
-        self.model.to("cpu")
+        self.model.to("cuda")
         self.model.eval()
 
         # Select data for the specified index
