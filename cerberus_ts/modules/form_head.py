@@ -1,43 +1,21 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
-from .processor import InputProcessor
-from .attention_aggregator import AttentionAggregator
-
-# Load in configuration
-from ..utils.cerberus_config import CerberusConfig
-
-class FormHead_Preserve(nn.Module):
-    def __init__(self, channels, seq_length, feature_length, d_neck, dropout_rate, layers, *args, **kwargs):
-        super(FormHead_Preserve, self).__init__()
-
-        # Assign additional keyword arguments
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+class FormHead_Base(nn.Module):
+    def __init__(self, length, d_features, d_neck, dropout_rate, layers, *args, **kwargs):
+        super(FormHead_Base, self).__init__()
         
-        # Establish Layers
-        self.processor = InputProcessor(in_channels = channels, seq_length=seq_length, feature_length=feature_length, dropout_rate=dropout_rate, layers=layers, **kwargs)
-        self.aggregator = AttentionAggregator(channels, seq_length, feature_length, d_neck)
+        def round_up_to_odd(f):
+            return int(np.ceil(f) // 2 * 2 + 1)
         
-    def forward(self, x):
+        kernel_size = round_up_to_odd(length // 4)  # Can be any odd number
+        padding_size = (kernel_size - 1) // 2  # Ensuring output size equals input size
         
-        x = self.processor(x)
-        x = self.aggregator(x)
-        
-        return(x)
-
-def ksize(size):
-    return max([1, round(size / 9)])
-
-class FormHead_Flatten(nn.Module):
-    def __init__(self, channels, seq_length, feature_length, d_neck, dropout_rate, layers, *args, **kwargs):
-        super(FormHead_Flatten, self).__init__()
-        
-        pool_size = 1
         head_layers = layers
         hsize = kwargs['out_channels']
-        size = seq_length
+        size = length
         
         if head_layers is None:
             head_layers = ["conv"]  # Default to a single convolutional layer if not specified
@@ -46,61 +24,53 @@ class FormHead_Flatten(nn.Module):
         if not isinstance(hsize, list):
             hsize = [hsize] * len(head_layers)  # Repeat the single hsize value for each layer
             
-        # Handle pool_size as either a single value or a list
-        if not isinstance(pool_size, list):
-            pool_size = [pool_size] * len(head_layers)  # Repeat the single hsize value for each layer
-
         self.layers = nn.ModuleList()
-        self.pools = nn.ModuleList()
-        
-        current_channels = channels
+    
+        current_channels = d_features * 2 # We double this because of how we set up the 2D coil norm
 
         for idx, layer_type in enumerate(head_layers):
             layer_hsize = hsize[idx]  # hsize for the current layer
-            layer_pool_size = pool_size[idx]
             if layer_type == "conv":
-                conv_layer = nn.Conv2d(current_channels, layer_hsize, kernel_size=(ksize(size), ksize(feature_length)))
+                conv_layer = nn.Conv1d(in_channels = current_channels, out_channels =  layer_hsize, kernel_size = kernel_size, stride=1, padding = padding_size)
                 self.layers.append(conv_layer)
                 # Batch Normalization layer
-                bn_layer = nn.BatchNorm2d(layer_hsize)  # Make sure to use the correct number of features
+                bn_layer = nn.BatchNorm1d(layer_hsize)  # Make sure to use the correct number of features
                 self.layers.append(bn_layer)
 
                 # Activation layer
                 self.layers.append(nn.LeakyReLU())
-                self.layers.append(nn.MaxPool2d(layer_pool_size,layer_pool_size))
-                current_channels = layer_hsize
                 
-                # Calculate the output size after convolution and pooling
-                size = (size- ksize(size) + 1) // layer_pool_size  # Assuming stride of 1 and pool of 2
-                feature_length = max([1, (feature_length - ksize(feature_length) + 1) // layer_pool_size])
-                linear_input_size = size * feature_length * layer_hsize
+                # Linear layers
+                self.layers.append(nn.Linear(length, length))
+                self.layers.append(nn.Linear(length, length))
+                self.layers.append(nn.Linear(length, length))
+                
+                current_channels = layer_hsize
             else:
                 raise ValueError(f"Unknown layer type: {layer_type}")
         
-        self.fc = nn.Linear(linear_input_size, d_neck)
+        self.fc = nn.Linear(current_channels, d_neck)
 
     def forward(self, x):
+        batch, length, dim = x.shape
+        
+        # Shape for processing
+        x = x.view(batch, dim, length)
         for layer in self.layers:
             x = layer(x)
 
-        x = torch.flatten(x, 1)
-        x = F.leaky_relu(self.fc(x))
+        # Reshape for final step
+        x = x.permute(0,2,1)
+        
+        # Get into size needed for neck
+        x = self.fc(x)
         return x
     
 class FormHead(nn.Module):
-    def __init__(self, option=None, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super(FormHead, self).__init__()
-
-        # Use the current value of CerberusConfig.processor_type if option is not provided
-        if option is None:
-            option = CerberusConfig.processor_type
-            
-        if option == 'flatten':
-            self.head = FormHead_Flatten(*args, **kwargs)
-        elif option == 'preserve':
-            self.head = FormHead_Preserve(*args, **kwargs)
-        else:
-            raise ValueError("Invalid option for FormHead")
+        
+        self.head = FormHead_Base(*args, **kwargs)
 
     def forward(self, x):
         return self.head(x)
@@ -111,26 +81,26 @@ if __name__=="__main__":
     batches = 10
     channels = 3
     seq_length = 32
-    feature_length = 32
+    feature_length = 8
 
-    out_channels = 12  # Should be a multiple of channels for split averaging
-    kernel_size = 3
+    out_channels = 12
     dropout_rate = 0.5
     layers = ["conv", "conv"]
     
     d_neck = 24
     
-    model = FormHead_Flatten(channels = channels, 
-                     seq_length=seq_length, 
-                     feature_length=feature_length, 
+    model = FormHead_Base( 
+                     length=seq_length, 
+                     d_features=feature_length // 2, 
                      d_neck=d_neck, 
                      dropout_rate=dropout_rate, 
                      layers=layers, 
-                     out_channels = out_channels , 
-                     kernel_size = kernel_size)
+                     out_channels = out_channels).to("cuda")
     
-    input_tensor = torch.randn(batches, channels, seq_length, feature_length)  # Input dimensions: [batches, channels, seq_length, feature_len]
-    output_tensor = model(input_tensor)
+    input_tensor = torch.randn(batches, seq_length, feature_length).to("cuda")  # Input dimensions: [batches, channels, seq_length, feature_len]
+    output_tensor = model(input_tensor).to("cpu")
 
     print(f"Input shape: {input_tensor.shape}")
     print(f"Output shape: {output_tensor.shape}")
+    
+    print(output_tensor)

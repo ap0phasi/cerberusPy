@@ -172,21 +172,33 @@ def coil_normalization(df):
         max_change_df = max_changes.to_frame(name='Max Absolute Change')
 
         return max_change_df
-    
+
     # Calculate the change for each feature
     df_diff = df.diff()
     # Calculate the max absolute change for each feature
     max_change_df = max_absolute_change(df_diff)
     
     normalized_df = pd.DataFrame()
+    conserved_subgroups = {}
 
     for column in df_diff.columns:
-        max_change_val = max_change_df.loc[column,'Max Absolute Change']
-        normalized_df[column] = (df_diff[column] + max_change_val) / (2 * max_change_val)
+        max_change_val = max_change_df.loc[column, 'Max Absolute Change']
+        normalized_feature = (df_diff[column] + max_change_val) / (2 * max_change_val)
+        
+        # Add the normalized feature and its counterpart
+        normalized_df[column] = normalized_feature
+        normalized_df[f'{column}_pair'] = 1 - normalized_feature
+        
+        # Save the conserved subgroup pair
+        conserved_subgroups[column] = f'{column}_pair'
+    
     # Set first row to 0 as there is no diff
     normalized_df.iloc[0] = normalized_df.iloc[0].fillna(0)
-       
-    return normalized_df, max_change_df
+    
+    # Normalize the dataframe by row such that each row sums to 1
+    normalized_df = normalized_df.div(normalized_df.sum(axis=1), axis=0)
+    
+    return normalized_df, max_change_df, conserved_subgroups
 
 
 def create_min_max_df(df):
@@ -214,30 +226,26 @@ def scale_data(df, min_max_df, feature_range=(0, 1)):
 
 # Make Tensor for coil-normalized data
 def make_torch_tensor(channel_array):
-    first_channel = torch.tensor(channel_array, dtype=torch.float32)
+    # TODO: Check if I should actually be handling these nans like this
+    channel_array = np.nan_to_num(channel_array, nan = 0)
+    return torch.tensor(channel_array, dtype=torch.float32)
 
-    # Create the second channel as 1 minus the first channel
-    second_channel = 1 - first_channel
+
+def denormalize_response(normalized_df, max_change_df, initial_value, conserved_subgroups):
+    # For now assume there are even pairs
+    denorm_array = []
+    for pair_col_1 in range(0,normalized_df.shape[1]-1, 2):
+        denorm_array.append(normalized_df[:,pair_col_1 + 1] / (normalized_df[:,pair_col_1] + normalized_df[:,pair_col_1 + 1]))
+        
+    denormalized_df = np.vstack(denorm_array).T
+    print(denormalized_df)
     
-    if CerberusConfig.set_masked_norm_zero:
-        # We want to make sure we maintain distinction between a response that is the maximum decrease and one that is masked.
-        # In the case where the first channel is 0, we will assume this denotes a NaN, so we will replace it like this:
-        second_channel[first_channel == 0] = 0
-
-    # Combine both channels to form a two-channel tensor
-    # The unsqueeze(1) adds a channel dimension
-    both_channels = torch.stack((first_channel, second_channel), dim=1)
-    
-    return both_channels
-
-
-def denormalize_response(normalized_df, max_change_df, initial_value):
     reconstructed_array = []
     new_value = initial_value
     reconstructed_array.append(initial_value)
     delta_max = np.array(max_change_df).T
-    for i in range(normalized_df.shape[0]):
-        delta_t = 2 * normalized_df[i,:] * delta_max - delta_max
+    for i in range(denormalized_df.shape[0]):
+        delta_t = 2 * denormalized_df[i,:] * delta_max - delta_max
         new_value = new_value + delta_t
         reconstructed_array.append(new_value[0])
         
@@ -251,16 +259,10 @@ def generate_predictions(model,selected_data):
     # Last knowns isn't coil-normalized so we won't process it as such
     last_knowns = torch.tensor(selected_data['last_known'][:,0,:], dtype=torch.float32).to("cuda")
     respones_generated = []
-    for igen in range(responses.shape[2]):
+    for igen in range(responses.shape[1]):
         with torch.no_grad():
             res_out = model(calls, contexts, responses, last_knowns)
-            responses[0,0,igen,:] = res_out[0]
-            # For multi-channel coil-normalized heads
-            responses[0,1,igen,:] = 1 - res_out[0]
-            
-            if CerberusConfig.set_masked_norm_zero:
-                # In the case where the first channel is 0, we will assume this denotes a NaN, so we will replace it like this:
-                responses[0,1,igen,:][responses[0,0,igen,:] == 0] = 0
+            responses[0,igen,:] = res_out[0]
             
             respones_generated.append(res_out[0].to("cpu").numpy())
         
@@ -303,6 +305,7 @@ class TimeseriesDataPreparer:
         self.downsampled_data = None
         self.normalized_data = None
         self.max_change_dfs = None
+        self.conserved_subgroups = None
         self.sliced_data = None
         self.selected_timestamps = None
         self.expanded_dict = None
@@ -316,9 +319,9 @@ class TimeseriesDataPreparer:
         self.scaled_df = scale_data(self.df, self.min_max_df, self.feature_range)
         self.downsampled_data = downsample_timeseries_data(self.scaled_df, self.feature_indexes, self.window_timesteps)
 
-        self.normalized_data, self.max_change_dfs = {}, {}
+        self.normalized_data, self.max_change_dfs, self.conserved_subgroups = {}, {}, {}
         for key in self.downsampled_data:
-            self.normalized_data[key], self.max_change_dfs[key] = coil_normalization(self.downsampled_data[key])
+            self.normalized_data[key], self.max_change_dfs[key], self.conserved_subgroups[key] = coil_normalization(self.downsampled_data[key])
 
         self.sliced_data, self.selected_timestamps = slice_timeseries_data(self.normalized_data, self.downsampled_data, self.sizes, self.thresholds)
         self.expanded_dict, self.response_data, self.unmasked_response = masked_expand(self.sliced_data, self.sizes)
@@ -341,11 +344,12 @@ class TimeseriesDataPreparer:
         self.dataloaders = accelerator.prepare(self.dataloaders)
 
 class ResponseGenerator:
-    def __init__(self, model, sliced_data, feature_indexes, max_change_dfs):
+    def __init__(self, model, sliced_data, feature_indexes, max_change_dfs, conserved_subgroups):
         self.model = model
         self.sliced_data = sliced_data
         self.feature_indexes = feature_indexes
         self.max_change_dfs = max_change_dfs
+        self.conserved_subgroups = conserved_subgroups
         
         # Initialize attributes to store results
         self.responses_generated = None
@@ -364,13 +368,16 @@ class ResponseGenerator:
         self.selected_data = {key: value[sel_index:sel_index+1, :] for key, value in self.sliced_data.items()}
         self.responses_generated = generate_predictions(self.model, self.selected_data)
         
+        print(self.responses_generated)
+        
         # Find last known values to condition denormalizaiton
         initial_value = self.selected_data['last_known'][0][0][self.feature_indexes['response']]
         max_change_df = self.max_change_dfs['response']
+        conserved_subgroups = self.conserved_subgroups['response']
 
         # Denormalize the response
-        self.denormalized_response = denormalize_response(self.responses_generated, max_change_df, initial_value)
-        self.observed_response = denormalize_response(self.selected_data['response'][0,:,:], max_change_df, initial_value)
+        self.denormalized_response = denormalize_response(self.responses_generated, max_change_df, initial_value, conserved_subgroups)
+        self.observed_response = denormalize_response(self.selected_data['response'][0,:,:], max_change_df, initial_value, conserved_subgroups)
         
     def unscale_response(self, min_max_df, feature_indexes):
         scale_frame = min_max_df.iloc[feature_indexes['response'],:]
