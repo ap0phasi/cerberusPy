@@ -8,6 +8,8 @@ from .form_neck import FormNeck
 from .form_head import FormHead
 
 from .training_warmup import LinearWarmupScheduler
+from .form_head import Conv1dBlock
+
 
 import torch
 import torch.nn as nn
@@ -51,15 +53,21 @@ class Cerberus(nn.Module):
         self.body = nn.ModuleList()
         
         for idx, layer_size in enumerate(body_layer_sizes):
+                
                 self.body.append(nn.Linear(current_length, layer_size))
+                #self.body.append(Conv1dBlock(in_channels=d_neck, out_channels=d_neck, length_in=current_length, length_out=layer_size))
                 current_length = layer_size
                 
                 # When we append lastknown it will increase the size by 1
                 if idx + 1 == self.last_known_loc:
                     current_length += 1
                 
+        # Reduce down to a single dimension
         self.body.append(nn.Linear(current_length, 1))
         
+        self.d_neck = d_neck
+        
+        # Aggregate to 
         self.final_agg  = nn.Linear(d_neck, res_fl * 2)
 
     def forward(self, x_call, x_contexts, x_response, x_lastknown):
@@ -95,13 +103,14 @@ class Cerberus(nn.Module):
             if i < len(self.body) - 1:
                 combined_input = F.leaky_relu(combined_input)
             
-        # Now we want to go back to operations along the feature length    
-        combined_input = combined_input.permute(0, 2, 1)
+        # Now we want to go back to operations along the feature length
+        # Combined input [b, d_neck,1 ] -> [b, d_neck]
+        combined_input = combined_input.squeeze(2)
             
         # Process down into res_fl, then softmax
         combined_input = self.final_agg(combined_input)
         #print(f"combined_input shape: {combined_input.shape}")    
-        out = torch.softmax(combined_input.squeeze(1), dim = 1)
+        out = torch.softmax(combined_input, dim = 1)
         return out
 
 from accelerate import Accelerator

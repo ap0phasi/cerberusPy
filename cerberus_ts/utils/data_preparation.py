@@ -193,10 +193,13 @@ def coil_normalization(df):
         conserved_subgroups[column] = f'{column}_pair'
     
     # Set first row to 0 as there is no diff
-    normalized_df.iloc[0] = normalized_df.iloc[0].fillna(0)
+    normalized_df.iloc[0,:] = normalized_df.iloc[0,:].fillna(0)
     
     # Normalize the dataframe by row such that each row sums to 1
     normalized_df = normalized_df.div(normalized_df.sum(axis=1), axis=0)
+    
+    # In case it was all 0s
+    normalized_df.iloc[0,:] = normalized_df.iloc[0,:].fillna(0)
     
     return normalized_df, max_change_df, conserved_subgroups
 
@@ -227,7 +230,7 @@ def scale_data(df, min_max_df, feature_range=(0, 1)):
 # Make Tensor for coil-normalized data
 def make_torch_tensor(channel_array):
     # TODO: Check if I should actually be handling these nans like this
-    channel_array = np.nan_to_num(channel_array, nan = 0)
+    #channel_array = np.nan_to_num(channel_array, nan = 0)
     return torch.tensor(channel_array, dtype=torch.float32)
 
 
@@ -238,7 +241,7 @@ def denormalize_response(normalized_df, max_change_df, initial_value, conserved_
         denorm_array.append(normalized_df[:,pair_col_1 + 1] / (normalized_df[:,pair_col_1] + normalized_df[:,pair_col_1 + 1]))
         
     denormalized_df = np.vstack(denorm_array).T
-    print(denormalized_df)
+    #print(denormalized_df)
     
     reconstructed_array = []
     new_value = initial_value
@@ -368,7 +371,7 @@ class ResponseGenerator:
         self.selected_data = {key: value[sel_index:sel_index+1, :] for key, value in self.sliced_data.items()}
         self.responses_generated = generate_predictions(self.model, self.selected_data)
         
-        print(self.responses_generated)
+        #print(self.responses_generated)
         
         # Find last known values to condition denormalizaiton
         initial_value = self.selected_data['last_known'][0][0][self.feature_indexes['response']]
