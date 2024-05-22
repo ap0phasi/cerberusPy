@@ -13,18 +13,27 @@ class Conv1dBlock(nn.Module):
         padding_size = (kernel_size - 1) // 2  # Ensuring output size equals input size
 
         self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size, stride = 1, padding = padding_size)
+        # self.conv1_spec = nn.utils.spectral_norm(nn.Conv1d(in_channels, out_channels, kernel_size, stride=1, padding=padding_size))
         self.bn_layer1 = nn.BatchNorm1d(out_channels)
+        # self.inorm = nn.InstanceNorm1d(out_channels)
+        # self.gn = nn.GroupNorm(num_groups=out_channels // 2, num_channels=out_channels)
         self.fc1 = nn.Linear(length_in, length_in)
+        self.fc_ln1 = nn.LayerNorm(length_in)
         self.fc2 = nn.Linear(length_in, length_in)
+        self.fc_ln2 = nn.LayerNorm(length_in)
         self.fc3 = nn.Linear(length_in, length_out)
+        self.fc_ln3 = nn.LayerNorm(length_out)
     
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn_layer1(x)
         x = F.leaky_relu(x)
         x = F.leaky_relu(self.fc1(x))
+        x = self.fc_ln1(x)
         x = F.leaky_relu(self.fc2(x))
+        x = self.fc_ln2(x)
         x = self.fc3(x)
+        x = self.fc_ln3(x)
         return x
 
 class FormHead_Base(nn.Module):

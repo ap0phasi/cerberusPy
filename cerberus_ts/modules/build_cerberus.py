@@ -74,7 +74,7 @@ class Cerberus(nn.Module):
         necks = self.form_necks(x_call, x_contexts, x_response)
 
         # process last known to correct size
-        processed_lastknown = self.last_known_process(x_lastknown)
+        processed_lastknown = torch.softmax(self.last_known_process(x_lastknown), dim = 1)
         
         necks = necks.permute(0, 2, 1)
         
