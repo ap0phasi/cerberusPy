@@ -150,9 +150,21 @@ def masked_expand(sliced_data, sizes):
     for key, value in sliced_data.items():
         if key == "response":
             res_shape = value.shape
-            response_data = value.reshape(res_shape[0]*res_shape[1],res_shape[2])
-            mask_array = np.tile(np.repeat(np.tril(np.ones([res_shape[1],res_shape[1]]),-1)[:,:,np.newaxis], res_shape[2], axis=2), (res_shape[0], 1, 1))
-            expanded_dict[key] = np.repeat(value,sizes['response'],axis=0) * mask_array
+            response_data = value.reshape(res_shape[0]*(res_shape[1]),res_shape[2])
+            #mask_array = np.tile(np.repeat(np.tril(np.ones([res_shape[1],res_shape[1]]),-1)[:,:,np.newaxis], res_shape[2], axis=2), (res_shape[0], 1, 1))
+            # This is tricky because the mask_array is right, I do want those values. But I want them to fill from the bottom. 
+            # Create an array for the expanded result
+            #expanded_dict[key] = np.repeat(value,sizes['response'],axis=0) * mask_array
+            
+            # Fill from bottom
+            expanded_array = np.zeros((res_shape[0] * res_shape[1], res_shape[1], res_shape[2]))
+            ex_count = 0
+            for i in range(res_shape[0]):
+                for j in range(res_shape[1]):
+                    expanded_array[ex_count,(res_shape[1]-j):,:] = value[i,:j,:]
+                    ex_count += 1
+                    
+            expanded_dict[key] = expanded_array
         else:
             expanded_dict[key] = np.repeat(value,sizes['response'],axis=0)
             
@@ -265,7 +277,11 @@ def generate_predictions(model,selected_data):
     for igen in range(responses.shape[1]):
         with torch.no_grad():
             res_out = model(calls, contexts, responses, last_knowns)
-            responses[0,igen,:] = res_out[0]
+            
+            #responses[0,igen,:] = res_out[0]
+            
+            # Add to bottom
+            responses[0,:,:] = torch.cat([responses, res_out.unsqueeze(1)],dim=1)[0,1:,:]    
             
             respones_generated.append(res_out[0].to("cpu").numpy())
         
