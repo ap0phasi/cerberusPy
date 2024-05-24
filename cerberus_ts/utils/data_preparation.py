@@ -281,7 +281,7 @@ def generate_predictions(model,selected_data):
             #responses[0,igen,:] = res_out[0]
             
             # Add to bottom
-            responses[0,:,:] = torch.cat([responses[0,:,:], res_out[0]], dim= 1)[0,1:,:]
+            responses[0,:,:] = torch.cat([responses, res_out.unsqueeze(1)],dim=1)[0,1:,:]    
             
             respones_generated.append(res_out[0].to("cpu").numpy())
         
