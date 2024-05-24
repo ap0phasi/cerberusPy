@@ -27,22 +27,22 @@ class Cerberus(nn.Module):
         num_contexts = len([key for key in sizes if 'context' in key])
         call_fl = len(feature_indexes['call'])
         res_fl = len(feature_indexes['response'])
-        res_size = sizes['response']
-        call_size = sizes['call']
+        res_length = sizes['response']
+        call_length = sizes['call']
         
-        concatenated_size = sum([value for key, value in sizes.items()])
+        concatenated_size = call_length
         
         if self.foresight is not None:
             
             self.foresight_head = FormHead(
                         channels = eventualities, 
-                        seq_length = res_size,
+                        seq_length = res_length,
                         feature_length = res_fl,
                         d_neck = d_neck, 
                         dropout_rate = dropout_rate, 
                         layers = head_layers, 
                         out_channels = kwargs['out_channels'])
-            concatenated_size += res_size
+            concatenated_size = call_length
 
         # The length of last_known is the same size as the call_fl, so we need a layer to get that to the neck size
         self.last_known_process = nn.Linear(call_fl, d_neck)
@@ -73,10 +73,10 @@ class Cerberus(nn.Module):
     def forward(self, x_call, x_contexts, x_response, x_lastknown):
         necks = self.form_necks(x_call, x_contexts, x_response)
 
+        necks = necks.permute(0,2,1) # [batch, length, d_neck] -> [batch, d_neck, length]
+        
         # process last known to correct size
         processed_lastknown = torch.softmax(self.last_known_process(x_lastknown), dim = 1)
-        
-        necks = necks.permute(0, 2, 1)
         
         if self.last_known_loc == 0:
             # Original behavior
@@ -104,8 +104,7 @@ class Cerberus(nn.Module):
                 combined_input = F.leaky_relu(combined_input)
             
         # Now we want to go back to operations along the feature length
-        # Combined input [b, d_neck,1 ] -> [b, d_neck]
-        combined_input = combined_input.squeeze(2)
+        combined_input = combined_input.squeeze(2) # [batch, d_neck, 1 ] -> [batch, d_neck]
             
         # Process down into res_fl, then softmax
         combined_input = self.final_agg(combined_input)

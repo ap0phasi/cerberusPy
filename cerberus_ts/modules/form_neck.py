@@ -10,32 +10,42 @@ class FormNeck(nn.Module):
     def __init__(self, sizes, feature_indexes, d_neck, head_layers, dropout_rate = 0.0, *args, **kwargs):
         super(FormNeck,self).__init__()
         
-        call_size = sizes['call']
-        res_size = sizes['response']
-        call_fl = len(feature_indexes['call'])
-        res_fl = len(feature_indexes['response'])
+        call_length = sizes['call']
+        res_length = sizes['response']
+        call_features = len(feature_indexes['call'])
+        res_features = len(feature_indexes['response'])
         context_dims = [[sizes[key], len(feature_indexes[key])]  for key in sizes if 'context' in key]
             
         partial_head = partial(FormHead,
-                         d_neck = d_neck, 
+                         d_neck = call_features * 2, 
                          dropout_rate = dropout_rate, 
+                         length_out = call_length,
                          layers = head_layers, 
                          **kwargs)
         
-        self.call_head = partial_head(length = call_size, d_features = call_fl)
-        self.context_heads = nn.ModuleList([ partial_head(length = icl[0], d_features = icl[1]) for icl in context_dims ])
-        self.response_head = partial_head(length = res_size, d_features = res_fl)
+        # Process the head. We can allow for a bias here
+        self.call_head = partial_head(length_in = call_length, d_features = call_features, d_neck = d_neck, bias = False)
+        
+        # We want to get the contexts and responses into the same size as the features
+        self.context_heads = nn.ModuleList([ partial_head(length_in = icl[0], d_features = icl[1], bias = False) for icl in context_dims ])
+        # We do not want biases because we want an empty response to make no change
+        self.response_head = partial_head(length_in = res_length, d_features = res_features, bias = False)
         
     def forward(self, x_call, x_contexts, x_response):
-        # Produce call, context, and masked response heads
-        call_head_out = self.call_head(x_call)
+        # Produce context and masked response heads
         context_heads_out = [head(x) for head, x in zip(self.context_heads, x_contexts)]
         response_head_out = self.response_head(x_response)
         
-        # Concatenate all the necks together
-        # print(f"Call head shape: {call_head_out.shape}")
-        # print(f"Response head shape: {response_head_out.shape}")
-        # print(f"Context_0 head shape: {context_heads_out[0].shape}")
-        necks = torch.cat([call_head_out] + context_heads_out + [response_head_out], dim=1)
+        # Add up the response and context heads
+        modification_tensor = torch.stack(context_heads_out + [response_head_out],dim=2).sum(dim=2)
+        
+        # Modify the call tensor
+        call_mod = x_call + modification_tensor #[batch, length, features]
+        
+        # Normalize the new call_mod 
+        call_mod_norm = torch.softmax(call_mod, dim = 2) 
+        #print(f"Normed Call shape: {call_mod_norm.shape}")
+    
+        call_head_out = self.call_head(call_mod_norm)
         # print(f"Neck shape {necks.shape}")
-        return necks
+        return call_head_out

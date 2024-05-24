@@ -7,21 +7,18 @@ def round_up_to_odd(f):
     return int(np.ceil(f) // 2 * 2 + 1)
 
 class Conv1dBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, length_in, length_out):
+    def __init__(self, in_channels, out_channels, length_in, length_out, bias = False):
         super(Conv1dBlock, self).__init__()
         kernel_size = round_up_to_odd(length_in // 4)  # Can be any odd number
         padding_size = (kernel_size - 1) // 2  # Ensuring output size equals input size
 
-        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size, stride = 1, padding = padding_size)
-        # self.conv1_spec = nn.utils.spectral_norm(nn.Conv1d(in_channels, out_channels, kernel_size, stride=1, padding=padding_size))
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size, stride = 1, padding = padding_size, bias = bias)
         self.bn_layer1 = nn.BatchNorm1d(out_channels)
-        # self.inorm = nn.InstanceNorm1d(out_channels)
-        # self.gn = nn.GroupNorm(num_groups=out_channels // 2, num_channels=out_channels)
-        self.fc1 = nn.Linear(length_in, length_in)
+        self.fc1 = nn.Linear(length_in, length_in, bias = bias)
         self.fc_ln1 = nn.LayerNorm(length_in)
-        self.fc2 = nn.Linear(length_in, length_in)
+        self.fc2 = nn.Linear(length_in, length_in, bias = bias)
         self.fc_ln2 = nn.LayerNorm(length_in)
-        self.fc3 = nn.Linear(length_in, length_out)
+        self.fc3 = nn.Linear(length_in, length_out, bias = bias)
         self.fc_ln3 = nn.LayerNorm(length_out)
     
     def forward(self, x):
@@ -37,7 +34,7 @@ class Conv1dBlock(nn.Module):
         return x
 
 class FormHead_Base(nn.Module):
-    def __init__(self, length, d_features, d_neck, dropout_rate, layers, *args, **kwargs):
+    def __init__(self, length_in, length_out, d_features, d_neck, dropout_rate, layers, bias, *args, **kwargs):
         super(FormHead_Base, self).__init__()
         
         head_layers = layers
@@ -53,13 +50,16 @@ class FormHead_Base(nn.Module):
         self.layers = nn.ModuleList()
     
         self.current_channels = d_features * 2 # We double this because of how we set up the 2D coil norm
+        
+        length_current = length_in
 
         for idx, layer_type in enumerate(head_layers):
             layer_hsize = hsize[idx]  # hsize for the current layer
             if layer_type == "conv":
-                self.layers.append(Conv1dBlock(in_channels = self.current_channels, out_channels =  layer_hsize, length_in=length, length_out= length))
+                self.layers.append(Conv1dBlock(in_channels = self.current_channels, out_channels =  layer_hsize, length_in=length_current, length_out= length_out, bias = bias))
                 
                 self.current_channels = layer_hsize
+                length_current = length_out
             else:
                 raise ValueError(f"Unknown layer type: {layer_type}")
             
@@ -68,13 +68,13 @@ class FormHead_Base(nn.Module):
 
     def forward(self, x):
         # Shape for processing
-        x = x.permute(0, 2, 1)
+        x = x.permute(0, 2, 1) #[batch, length, features] -> [batch, features, length]
         
         for layer in self.layers:
             x = layer(x)
 
         # Reshape for final step
-        x = x.permute(0, 2, 1)
+        x = x.permute(0, 2, 1) #[batch, features, length] -> [batch, length, features]
         
         # Get into size needed for neck
         x = self.fc(x)
@@ -104,11 +104,13 @@ if __name__=="__main__":
     d_neck = 24
     
     model = FormHead_Base( 
-                     length=seq_length, 
+                     length_in=seq_length,
+                     length_out=seq_length * 2,
                      d_features=feature_length // 2, 
                      d_neck=d_neck, 
                      dropout_rate=dropout_rate, 
                      layers=layers, 
+                     bias = False,
                      out_channels = out_channels).to("cuda")
     
     input_tensor = torch.randn(batches, seq_length, feature_length).to("cuda")  # Input dimensions: [batches, channels, seq_length, feature_len]
