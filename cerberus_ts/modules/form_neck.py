@@ -24,7 +24,10 @@ class FormNeck(nn.Module):
                          **kwargs)
         
         # Process the head. We can allow for a bias here
-        self.call_head = partial_head(length_in = call_length, d_features = call_features, d_neck = d_neck, bias = True)
+        self.call_head = partial_head(length_in = call_length, d_features = call_features, d_neck = call_features * 2, bias = True)
+        
+
+        self.call_body = partial_head(length_in = call_length, d_features = call_features, d_neck = d_neck, bias = True)
         
         # We want to get the contexts and responses into the same size as the features
         self.context_heads = nn.ModuleList([ partial_head(length_in = icl[0], d_features = icl[1], bias = True) for icl in context_dims ])
@@ -39,6 +42,9 @@ class FormNeck(nn.Module):
         context_heads_out = [head(x) for head, x in zip(self.context_heads, x_contexts)]
         response_head_out = self.response_head(x_response)
         
+        # If we want to process the call first
+        call_head_out = self.call_head(x_call)
+        
         # # Add up the response and context heads
         # modification_tensor = torch.stack(context_heads_out + [response_head_out],dim=2).sum(dim=2)#.permute(1,0,2)
         
@@ -51,16 +57,15 @@ class FormNeck(nn.Module):
         
         # Option 3:
         context_mod = torch.stack(context_heads_out,dim=2).sum(dim=2)
-        base_tensor = (x_call + context_mod).permute(1,0,2)
+        base_tensor = (call_head_out + context_mod).permute(1,0,2) #[batch, length, features] -> [length, batch, features]
         modification_tensor = response_head_out.permute(1,0,2)
         call_mod, _ = self.multihead_attention(base_tensor, modification_tensor, modification_tensor)
-        call_mod = call_mod.permute(1,0,2)
+        call_mod = call_mod.permute(1,0,2) # [length, batch, features] -> [batch, length, features]
         
-
         # Normalize the new call_mod 
         call_mod_norm = torch.softmax(call_mod, dim = 2) 
         #print(f"Normed Call shape: {call_mod_norm.shape}")
     
-        call_head_out = self.call_head(call_mod_norm)
+        necks = self.call_body(call_mod_norm)
         # print(f"Neck shape {necks.shape}")
-        return call_head_out
+        return necks
